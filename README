@@ -1,6 +1,32 @@
-rtl-sdr
-turns your Realtek RTL2832 based DVB dongle into a SDR receiver
+RTL SDR FM Streamer
+Turns your Realtek RTL2832 based DVB dongle into a FM radio receiver.
 ======================================================================
 
-For more information see:
-http://sdr.osmocom.org/trac/wiki/rtl-sdr
+RTL SDR FM Streamer is a small tool to stream FM radio by using a DVB-T dongle to KODI.
+The DVB-T dongle has to be based on the Realtek RTL2832U.
+See http://sdr.osmocom.org/trac/wiki/rtl-sdr for more RTL SDR details.
+
+Usage:
+$ ./rtl_fm_streamer
+
+Options:
+The options "-P" defines the port where the HTTP server is listen on. The default port is 2346.
+e.g. $ ./rtl_fm_streamer -P 12345
+
+To connect to the server you can use KODI, VLC or mplayer. Just connect to the URL
+http://IP:port/FrequencyInHerz
+
+e.g. (93.2 MHz): http://localhost:2346/93200000
+
+To use this tool in KODI simply create a *.strm file
+e.g.
+ File name: FM_93_2.strm
+ Content: http://localhost:2346/93200000
+
+Known Problems:
+- Server accepts only one client
+- The demodulation is always running (high CPU load). It doesn't matter if a client is connected or not.
+- Only mono output
+
+Support:
+Write me an e-mail: Albrecht <albrechtloh@gmx.de>
