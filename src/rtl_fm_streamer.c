@@ -78,6 +78,8 @@
 #include "rtl-sdr.h"
 #include "convenience/convenience.h"
 
+#define VERSION "0.0.2\n"
+
 #define DEFAULT_SAMPLE_RATE		24000
 #define DEFAULT_BUF_LENGTH		(1 * 16384)
 #define MAXIMUM_OVERSAMPLE		16
@@ -101,7 +103,7 @@ static int *atan_lut = NULL;
 static int atan_lut_size = 131072; /* 512 KB */
 static int atan_lut_coef = 8;
 
-static int conn_desc1, conn_desc2, conn_desc3, conn_desc4;
+static int ConnectionDesc;
 bool isStartStream;
 
 struct dongle_state
@@ -194,12 +196,9 @@ struct controller_state controller;
 void usage(void)
 {
 	fprintf(stderr,
-		"rtl_fm, a simple narrow band FM demodulator for RTL2832 based DVB-T receivers\n\n"
-		"Use:\trtl_fm -f freq [-options] [filename]\n"
-		"\t-f frequency_to_tune_to [Hz]\n"
-		"\t    use multiple -f for scanning (requires squelch)\n"
-		"\t    ranges supported, -f 118M:137M:25k\n"
-		"\t[-M modulation (default: fm)]\n"
+		"rtl_fm_streamer, a simple narrow band FM demodulator for RTL2832 based DVB-T receivers\n\n"
+		"Use:\trtl_fm_streamer -f freq [-options] [filename]\n"
+		"\t[-M modulation (default: wbfm)]\n"
 		"\t    fm, wbfm, raw, am, usb, lsb\n"
 		"\t    wbfm == -M fm -s 170k -o 4 -A fast -r 32k -l 0 -E deemp\n"
 		"\t    raw mode outputs 2x16 bit IQ pairs\n"
@@ -207,8 +206,6 @@ void usage(void)
 		"\t[-d device_index (default: 0)]\n"
 		"\t[-g tuner_gain (default: automatic)]\n"
 		"\t[-l squelch_level (default: 0/off)]\n"
-		//"\t    for fm squelch is inverted\n"
-		//"\t[-o oversampling (default: 1, 4 recommended)]\n"
 		"\t[-p ppm_error (default: 0)]\n"
 		"\t[-E enable_option (default: none)]\n"
 		"\t    use multiple -E to enable multiple options\n"
@@ -217,27 +214,18 @@ void usage(void)
 		"\t    deemp:  enable de-emphasis filter\n"
 		"\t    direct: enable direct sampling\n"
 		"\t    offset: enable offset tuning\n"
+		"\t[-P Listen IP port]\n"
 		"\tfilename ('-' means stdout)\n"
 		"\t    omitting the filename also uses stdout\n\n"
 		"Experimental options:\n"
-		"\t[-r resample_rate (default: none / same as -s)]\n"
+		"\t[-r resample_rate (default: 48000)]\n"
 		"\t[-t squelch_delay (default: 10)]\n"
 		"\t    +values will mute/scan, -values will exit\n"
 		"\t[-F fir_size (default: off)]\n"
 		"\t    enables low-leakage downsample filter\n"
 		"\t    size can be 0 or 9.  0 has bad roll off\n"
 		"\t[-A std/fast/lut choose atan math (default: std)]\n"
-		//"\t[-C clip_path (default: off)\n"
-		//"\t (create time stamped raw clips, requires squelch)\n"
-		//"\t (path must have '\%s' and will expand to date_time_freq)\n"
-		//"\t[-H hop_fifo (default: off)\n"
-		//"\t (fifo will contain the active frequency)\n"
-		"\n"
-		"Produces signed 16 bit ints, use Sox or aplay to hear them.\n"
-		"\trtl_fm ... | play -t raw -r 24k -es -b 16 -c 1 -V1 -\n"
-		"\t           | aplay -r 24k -f S16_LE -t raw -c 1\n"
-		"\t  -M wbfm  | play -r 32k ... \n"
-		"\t  -s 22050 | multimon -t raw /dev/stdin\n\n");
+		"\n");
 	exit(1);
 }
 
@@ -859,10 +847,10 @@ static void *output_thread_fn(void *arg)
 
         if(isStartStream)
         {
-            SentNum = send(conn_desc4, (char*) s->result, s->result_len * 2,MSG_NOSIGNAL);
+            SentNum = send(ConnectionDesc, (char*) s->result, s->result_len * 2,MSG_NOSIGNAL);
             if(SentNum<0)
             {
-                close(conn_desc4);
+                close(ConnectionDesc);
                 isStartStream=false;
             }
         }
@@ -1067,19 +1055,10 @@ int main(int argc, char **argv)
 	int dev_given = 0;
 	int custom_ppm = 0;
 
-    printf("RTL SDR FM Streamer - Version 0.01\n");
-    printf("Based on \"rtl_fm\", see http://sdr.osmocom.org/trac/wiki/rtl-sdr for details\n");
-    printf("Modified by Albrecht Lohoefener <albrechtloh@gmx.de>\n");
-    printf("License GPL\n\n");
-
-	dongle_init(&dongle);
-	demod_init(&demod);
-	output_init(&output);
-	controller_init(&controller);
-
+	socklen_t size;
 	char RTSPhead[] = {'H','T','T','P','/','1','.','1',' ','2','0','0',' ','O','K','\r','\n','\r','\n'};
 
-	/*
+    /*
 	HTTP/1.0 200 OK
 	Content-Length: 0
 	Content-type: audio/wav
@@ -1117,7 +1096,7 @@ int main(int argc, char **argv)
 	0x0d,0x0a,0x0d,0x0a
 	};
 
-	// 0x18 is samplerate, 0x1c is rate * channels * bytes per sample
+	// 0x18 is sample rate, 0x1c is rate * channels * bytes per sample
 	char wavhead[] = {
 	0x52,0x49, 0x46,0x46, 0x64,0x19, 0xff,0x7f, 0x57,0x41, 0x56,0x45, 0x66,0x6d, 0x74,0x20,
 	0x10,0x00, 0x00,0x00, 0x01,0x00, 0x01,0x00, 0x80,0xbb, 0x00,0x00, 0x80,0xbb, 0x00,0x00,
@@ -1128,13 +1107,24 @@ int main(int argc, char **argv)
 
 	char TCPRead[1024];
 	int TCPReadCount;
-    bool isConnection;
+	bool isConnection;
 
 	// Two socket descriptors which are just integer numbers used to access a socket
-    int sock_descriptor;
+	int SocketDesc;
 
-    // Two socket address structures - One for the server itself and the other for client
-    struct sockaddr_in serv_addr, client_addr;
+	// Two socket address structures - One for the server itself and the other for client
+	struct sockaddr_in serv_addr, client_addr;
+
+    printf("RTL SDR FM Streamer Version ");
+    printf(VERSION);
+    printf("Based on \"rtl_fm\", see http://sdr.osmocom.org/trac/wiki/rtl-sdr for details\n");
+    printf("Modified by Albrecht Lohoefener <albrechtloh@gmx.de>\n");
+    printf("License GPL\n\n");
+
+	dongle_init(&dongle);
+	demod_init(&demod);
+	output_init(&output);
+	controller_init(&controller);
 
     // Initialize the server address struct to zero
     bzero((char *)&serv_addr, sizeof(serv_addr));
@@ -1167,24 +1157,7 @@ int main(int argc, char **argv)
     controller.freqs[controller.freq_len] = 100000000;
     controller.freq_len++;
 
-    while ((opt = getopt(argc, argv, "p:v")) != -1)
-    {
-        switch (opt)
-        {
-            case 'p':
-                serv_addr.sin_port = htons((uint32_t)atofs(optarg));
-                printf("Use IP port %u\n",(uint32_t)atofs(optarg));
-            break;
-
-            default:
-                printf("Help\np - Port\n");
-                exit(1);
-            break;
-        }
-    }
-
-    /*
-	while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:h")) != -1) {
+    while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:h:P:v")) != -1) {
 		switch (opt) {
 		case 'd':
 			dongle.dev_index = verbose_device_search(optarg);
@@ -1279,52 +1252,53 @@ int main(int argc, char **argv)
 				demod.deemph = 1;
 				demod.squelch_level = 0;}
 			break;
+
+		 case 'P':
+				serv_addr.sin_port = htons((uint32_t)atofs(optarg));
+				printf("Use IP port %u\n",(uint32_t)atofs(optarg));
+			break;
+
+		 case 'v':
+				printf(VERSION);
+			break;
+
+
 		case 'h':
 		default:
 			usage();
 			break;
 		}
-    }*/
+    }
 
-       // Create socket of domain - Internet (IP) address, type - Stream based (TCP) and protocol unspecified
-        // since it is only useful when underlying stack allows more than one protocol and we are choosing one.
-        // 0 means choose the default protocol.
-        sock_descriptor = socket(AF_INET, SOCK_STREAM, 0);
+	// Create socket of domain - Internet (IP) address, type - Stream based (TCP) and protocol unspecified
+	// since it is only useful when underlying stack allows more than one protocol and we are choosing one.
+	// 0 means choose the default protocol.
+	SocketDesc = socket(AF_INET, SOCK_STREAM, 0);
 
 	optval = 1;
-	setsockopt(sock_descriptor, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+	setsockopt(SocketDesc, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
 
 	optval = 0;
-	setsockopt(sock_descriptor, SOL_SOCKET, SO_SNDBUF, &optval, sizeof(optval));
+	setsockopt(SocketDesc, SOL_SOCKET, SO_SNDBUF, &optval, sizeof(optval));
 
-        // A valid descriptor is always a positive value
-        if(sock_descriptor < 0)
-          printf("Failed creating socket\n");
+	// A valid descriptor is always a positive value
+	if(SocketDesc < 0)
+	  printf("Failed creating socket\n");
 
-        // Fill server's address family
-        serv_addr.sin_family = AF_INET;
+	// Fill server's address family
+	serv_addr.sin_family = AF_INET;
 
-        // Server should allow connections from any ip address
-        serv_addr.sin_addr.s_addr = INADDR_ANY;
+	// Server should allow connections from any ip address
+	serv_addr.sin_addr.s_addr = INADDR_ANY;
 
-        // 16 bit port number on which server listens
-        // The function htons (host to network short) ensures that an integer is interpretted
-        // correctly (whether little endian or big endian) even if client and server have different architectures
-        //serv_addr.sin_port = htons(2346);
- 
-        // Attach the server socket to a port. This is required only for server since we enforce
-        // that it does not select a port randomly on it's own, rather it uses the port specified
-        // in serv_addr struct.
-        if (bind(sock_descriptor, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-        	printf("Failed to bind\n");
-       
-        // Server should start listening - This enables the program to halt on accept call (coming next)
-        // and wait until a client connects. Also it specifies the size of pending connection requests queue
-        // i.e. in this case it is 5 which means 5 clients connection requests will be held pending while
-        // the server is already processing another connection request.
-        listen(sock_descriptor, 5);
- 
-        int size = sizeof(client_addr);
+	size = sizeof(client_addr);
+
+	// Bin to socket
+	if (bind(SocketDesc, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+		printf("Failed to bind\n");
+
+	// Allow 5 connections
+	listen(SocketDesc, 5);
 
 	/* quadruple sample_rate to limit to Δθ to ±π/2 */
 	demod.rate_in *= demod.post_downsample;
@@ -1397,8 +1371,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-	//r = rtlsdr_set_testmode(dongle.dev, 1);
-
 	/* Reset endpoint before we start reading from it (mandatory) */
 	verbose_reset_buffer(dongle.dev);
 
@@ -1413,13 +1385,13 @@ int main(int argc, char **argv)
         if(!isStartStream)
 		{
             printf("Waiting for connection...\n");
-			conn_desc4 = accept(sock_descriptor, (struct sockaddr *)&client_addr, &size);         
-			if (conn_desc4 == -1)
+			ConnectionDesc = accept(SocketDesc, (struct sockaddr *)&client_addr, &size);         
+			if (ConnectionDesc == -1)
 				printf("Failed accepting connection\n");
 			else
 				printf("Connected\n");
 
-            TCPReadCount = recv(conn_desc4, TCPRead, 1024, 0);
+            TCPReadCount = recv(ConnectionDesc, TCPRead, 1024, 0);
 
 			if(TCPReadCount >0)
 			{
@@ -1432,8 +1404,8 @@ int main(int argc, char **argv)
 			if(!strncmp(TCPRead,"HEAD",4))
 			{
                 printf("Send OK and close the connection \n");
-                send(conn_desc4, HTTP_OK, sizeof(HTTP_OK),MSG_NOSIGNAL);
-                close(conn_desc4);
+                send(ConnectionDesc, HTTP_OK, sizeof(HTTP_OK),MSG_NOSIGNAL);
+                close(ConnectionDesc);
 			}
 
             if(!strncmp(TCPRead,"GET",3))
@@ -1446,8 +1418,8 @@ int main(int argc, char **argv)
                 verbose_set_frequency(dongle.dev, dongle.freq);
 
                 // Start streaming
-                send(conn_desc4, StreamStart, sizeof(StreamStart),MSG_NOSIGNAL);
-                send(conn_desc4, wavhead, sizeof(wavhead),0);
+                send(ConnectionDesc, StreamStart, sizeof(StreamStart),MSG_NOSIGNAL);
+                send(ConnectionDesc, wavhead, sizeof(wavhead),0);
 
                 isStartStream = true;
             }
@@ -1471,8 +1443,8 @@ int main(int argc, char **argv)
 	pthread_join(controller.thread, NULL);
 
 	// Close TCP connection
-	close(conn_desc3);
-        close(sock_descriptor); 
+	close(ConnectionDesc);
+        close(SocketDesc); 
 
 	//dongle_cleanup(&dongle);
 	demod_cleanup(&demod);
@@ -1486,4 +1458,3 @@ int main(int argc, char **argv)
 	return r >= 0 ? r : -r;
 }
 
-// vim: tabstop=8:softtabstop=8:shiftwidth=8:noexpandtab
