@@ -78,7 +78,7 @@
 #include "rtl-sdr.h"
 #include "convenience/convenience.h"
 
-#define VERSION "0.0.2\n"
+#define VERSION "0.0.3\n"
 
 #define DEFAULT_SAMPLE_RATE		24000
 #define DEFAULT_BUF_LENGTH		(1 * 16384)
@@ -1136,10 +1136,9 @@ static void *connection_thread_fn(void *arg)
 		if(TCPReadCount >0)
 		{
 			TCPRead[TCPReadCount]='\0';
-			//printf("1: %i %i %s\n",TCPReadCount,TCPRead);
 		}
 		else
-			printf("Error: %i %i\n",TCPReadCount, errno);
+			printf("Error: %s (%i)\n",strerror(errno),errno);
 
 		if(!strncmp(TCPRead,"HEAD",4))
 		{
@@ -1469,8 +1468,6 @@ int main(int argc, char **argv)
 	pthread_join(output.thread, NULL);
 	safe_cond_signal(&controller.hop, &controller.hop_m);
 	pthread_join(controller.thread, NULL);
-
-	//pthread_join(connection.ConnectionThread, NULL);
 
 	// Close TCP connection
 	close(ConnectionDesc);
