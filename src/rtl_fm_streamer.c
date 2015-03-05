@@ -863,13 +863,19 @@ static void *output_thread_fn(void *arg)
 
         if(isStartStream)
         {
-            SentNum = send(ConnectionDesc, (char*) s->result, s->result_len * 2,MSG_NOSIGNAL);
-           /*if(SentNum<0)
-            {
-            	printf("Error sending stream, close the connection!\n");
-                close(ConnectionDesc);
-                isStartStream=false;
-            }*/
+        	SentNum = send(ConnectionDesc, (char*) s->result, s->result_len * 2,MSG_NOSIGNAL);
+			if(SentNum<0)
+			{
+				printf("Error sending stream: \"%s\". Close the connection!\n",strerror(errno));
+
+				// Close connection
+				close(ConnectionDesc);
+				isStartStream=false;
+
+				// Stop reading samples from dongle
+				rtlsdr_cancel_async(dongle.dev);
+				pthread_join(dongle.thread, NULL);
+			}
         }
 
 		pthread_rwlock_unlock(&s->rw);
@@ -1120,6 +1126,9 @@ static void *connection_thread_fn(void *arg)
 		{
 			printf("Connected\n");
 			ConnectionDesc = ConnectionDescNew;
+
+			// Start reading samples from dongle
+			pthread_create(&dongle.thread, NULL, dongle_thread_fn, (void *)(&dongle));
 		}
 
 		TCPReadCount = recv(ConnectionDesc, TCPRead, 1024, 0);
@@ -1440,8 +1449,6 @@ int main(int argc, char **argv)
 	usleep(100000);
 	pthread_create(&output.thread, NULL, output_thread_fn, (void *)(&output));
 	pthread_create(&demod.thread, NULL, demod_thread_fn, (void *)(&demod));
-	pthread_create(&dongle.thread, NULL, dongle_thread_fn, (void *)(&dongle));
-
 	pthread_create(&connection.ConnectionThread, NULL, connection_thread_fn, (void *)(&connection));
 
 	while (!do_exit)
