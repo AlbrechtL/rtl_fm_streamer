@@ -1,9 +1,15 @@
 /*
- * rtl-sdr, turns your Realtek RTL2832 based DVB dongle into a SDR receiver
+ * rtl_fm_streamer, turns your Realtek RTL2832 based DVB dongle into a SDR receiver
+ * Based on "rtl_fm", see http://sdr.osmocom.org/trac/wiki/rtl-sdr for details
+ *
  * Copyright (C) 2012 by Steve Markgraf <steve@steve-m.de>
  * Copyright (C) 2012 by Hoernchen <la@tfc-server.de>
  * Copyright (C) 2012 by Kyle Keen <keenerd@gmail.com>
  * Copyright (C) 2013 by Elias Oenal <EliasOenal@gmail.com>
+ * Copyright (C) 2015 by Albrecht Lohoefener <albrechtloh@gmx.de>
+ *
+ * FM stereo demodulation "LP Real: FIR hamming stereo" copyright (C) 2013 by Miroslav Slugen <thunder.m@email.cz>
+ * More information http://comments.gmane.org/gmane.comp.mobile.osmocom.sdr/299
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -78,9 +84,9 @@
 #include "rtl-sdr.h"
 #include "convenience/convenience.h"
 
-#define VERSION "0.0.3\n"
+#define VERSION "0.0.4"
 
-#define DEFAULT_SAMPLE_RATE		24000
+#define DEFAULT_SAMPLE_RATE		240000
 #define DEFAULT_BUF_LENGTH		(1 * 16384)
 #define MAXIMUM_OVERSAMPLE		16
 #define MAXIMUM_BUF_LENGTH		(MAXIMUM_OVERSAMPLE * DEFAULT_BUF_LENGTH)
@@ -105,6 +111,27 @@ static int atan_lut_coef = 8;
 
 static int ConnectionDesc;
 bool isStartStream;
+
+struct lp_real
+{
+	int16_t  *br;
+	int16_t  *bm;
+	int16_t  *bs;
+	int16_t  *fm;
+	int16_t  *fp;
+	int16_t  *fs;
+	int16_t  **fm_lut;
+	int16_t  **fp_lut;
+	int16_t  **fs_lut;
+	int      swf;
+	int      pp;
+	int      cwf;
+	int      freq;
+	int      pos;
+	int      size;
+	int      mode;
+	int      sum;
+};
 
 struct dongle_state
 {
@@ -149,11 +176,16 @@ struct demod_state
 	int      downsample_passes;
 	int      comp_fir_size;
 	int      custom_atan;
-	int      deemph, deemph_a;
+	double   deemph;
+	int      deemph_a;
+	int      deemph_l;
+	int      deemph_r;
 	int      now_lpr;
 	int      prev_lpr_index;
 	int      dc_block, dc_avg;
 	void     (*mode_demod)(struct demod_state*);
+	int      stereo;
+	struct lp_real lpr;
 	pthread_rwlock_t rw;
 	pthread_cond_t ready;
 	pthread_mutex_t ready_m;
@@ -352,26 +384,113 @@ int low_pass_simple(int16_t *signal2, int len, int step)
 	return len / step;
 }
 
-void low_pass_real(struct demod_state *s)
+void build_low_pass_real(struct demod_state *fm)
+{
+	int i, j;
+	double fmh, fpl, fph, fsl, fsh, fv, fi, fh, wf;
+
+	fprintf(stderr, "Init FIR hamming stereo, size: %d sample_rate: %d\n",fm->lpr.size,fm->rate_in);
+	wf = 2.* M_PI * 19000. / (double) fm->rate_in;
+	fm->lpr.swf = lrint(32767. * sin(wf));
+	fm->lpr.cwf = lrint(32767. * cos(wf));
+	fm->lpr.pp = 0;
+	fmh = (double) fm->lpr.freq / (double) fm->rate_in;
+	fpl = 18000. / (double) fm->rate_in;
+	fph = 20000. / (double) fm->rate_in;
+	fsl = 21000. / (double) fm->rate_in;
+	fsh = 55000. / (double) fm->rate_in;
+	fm->lpr.br = malloc(fm->lpr.size << 1);
+	fm->lpr.bm = malloc(fm->lpr.size << 1);
+	fm->lpr.bs = malloc(fm->lpr.size << 1);
+	fm->lpr.fm = malloc(fm->lpr.size << 1);
+	fm->lpr.fp = malloc(fm->lpr.size << 1);
+	fm->lpr.fs = malloc(fm->lpr.size << 1);
+	fm->lpr.pos = 0;
+	for(i = 0; i < fm->lpr.size; i++)
+	{
+		fm->lpr.br[i] = 0;
+		fm->lpr.bm[i] = 0;
+		fm->lpr.bs[i] = 0;
+		fi = (double) i - ((double) (fm->lpr.size - 1) / 2.);
+		/* hamming window */
+		fh = (0.54 - 0.46 * cos(2. * M_PI * (double) i / (double) (fm->lpr.size - 1)));
+		/* low pass */
+		fv = (fi == 0) ? 2. * fmh : sin(2. * M_PI * fmh * fi) / (M_PI * fi);
+		fm->lpr.fm[i] = (int16_t) lrint(fv * fh * 32768.);
+		/* pilot band pass */
+		fv = (fi == 0) ? 2. * (fph - fpl) : (sin(2. * M_PI * fph * fi) - sin(2. * M_PI * fpl * fi)) / (M_PI * fi);
+		fm->lpr.fp[i] = (int16_t) lrint(fv * fh * 32768.);
+		/* stereo band pass */
+		fv = (fi == 0) ? 2. * (fsh - fsl) : (sin(2. * M_PI * fsh * fi) - sin(2. * M_PI * fsl * fi)) / (M_PI * fi);
+		fm->lpr.fs[i] = (int16_t) lrint(fv * fh * 32768.);
+	}
+	fm->lpr.sum = 32768;
+}
+
+float sin2atan2f(int x, int y) {
+
+	float z = (float) y / (float) x;
+    /* y = 0 projde bez problémů dále */
+    if (x == 0) return 0.f;
+
+    return (z + z) / (1.f + (z * z));
+}
+
+void low_pass_real(struct demod_state *fm)
+{
+	int i=0, i2=0, i3=0, i4=0;
+	int fast = (int)fm->rate_out;
+	int slow = fm->rate_out2;
+	switch (fm->lpr.mode) {
 /* simple square window FIR */
 // add support for upsampling?
-{
-	int i=0, i2=0;
-	int fast = (int)s->rate_out;
-	int slow = s->rate_out2;
-	while (i < s->result_len) {
-		s->now_lpr += s->result[i];
-		i++;
-		s->prev_lpr_index += slow;
-		if (s->prev_lpr_index < fast) {
-			continue;
+	case 0:
+		// Mono low pass
+		while (i < fm->result_len) {
+			fm->now_lpr += fm->result[i];
+				i++;
+				fm->prev_lpr_index += slow;
+				if (fm->prev_lpr_index < fast) {
+					continue;
+				}
+				fm->result[i2] = (int16_t)(fm->now_lpr / (fast/slow));
+				fm->prev_lpr_index -= fast;
+				fm->now_lpr = 0;
+				i2 += 1;
+			}
+		break;
+	case 1:{ //LP Real: FIR hamming stereo
+		int vm, vs, vp;
+		while (i < fm->result_len)
+		{
+			fm->lpr.br[fm->lpr.pos] = fm->result[i++];
+			for (i3 = 0, i4 = fm->lpr.pos, vm = 0, vp = 0, vs = 0; i3 < fm->lpr.size; i3++) {
+				if (++i4 == fm->lpr.size) i4 = 0;
+				vm+= (int)(fm->lpr.br[i4] * fm->lpr.fm[i3]);
+				vp+= (int)(fm->lpr.br[i4] * fm->lpr.fp[i3]);
+				vs+= (int)(fm->lpr.br[i4] * fm->lpr.fs[i3]);
+			}
+			//printf("vm: %i vp: %i vs: %i\n",vm,vp,vs);
+			vp/= fm->lpr.sum;
+			fm->lpr.bm[fm->lpr.pos] = (int16_t)(vm / fm->lpr.sum);
+			fm->lpr.bs[fm->lpr.pos] = (int16_t)(lrintf((float) vs * sin2atan2f(vp * fm->lpr.swf, vp * fm->lpr.cwf - fm->lpr.pp * 32767)) / fm->lpr.sum);
+			fm->lpr.pp = vp;
+			if (++fm->lpr.pos == fm->lpr.size) fm->lpr.pos = 0;
+			if ((fm->prev_lpr_index+= slow) < fast) continue;
+			fm->prev_lpr_index-= fast;
+			for (i3 = 0, i4 = fm->lpr.pos, vm = 0, vs = 0; i3 < fm->lpr.size; i3++) {
+				vm+= (int)(fm->lpr.bm[i4] * fm->lpr.fm[i3]);
+				vs+= (int)(fm->lpr.bs[i4] * fm->lpr.fm[i3]);
+				if (++i4 == fm->lpr.size) i4 = 0;
+			}
+			fm->result[i2] = (int16_t)((vm + vs) / fm->lpr.sum);
+			fm->result[i2 + 1] = (int16_t)((vm - vs) / fm->lpr.sum);
+			//fprintf(stderr,"l: %d r: %d diff %i\n",fm->result[i2],fm->result[i2 + 1], (int)(fm->result[i2] - fm->result[i2 + 1]));
+			i2+= 2;
 		}
-		s->result[i2] = (int16_t)(s->now_lpr / (fast/slow));
-		s->prev_lpr_index -= fast;
-		s->now_lpr = 0;
-		i2 += 1;
+		}break;
 	}
-	s->result_len = i2;
+	fm->result_len = i2;
 }
 
 void fifth_order(int16_t *data, int length, int16_t *hist)
@@ -610,18 +729,38 @@ void raw_demod(struct demod_state *fm)
 
 void deemph_filter(struct demod_state *fm)
 {
-	static int avg;  // cheating...
 	int i, d;
 	// de-emph IIR
 	// avg = avg * (1 - alpha) + sample * alpha;
-	for (i = 0; i < fm->result_len; i++) {
-		d = fm->result[i] - avg;
-		if (d > 0) {
-			avg += (d + fm->deemph_a/2) / fm->deemph_a;
-		} else {
-			avg += (d - fm->deemph_a/2) / fm->deemph_a;
+	if (fm->stereo) {
+		for (i = 0; i < fm->result_len; i+= 2) {
+			/* left */
+			d = fm->result[i] - fm->deemph_l;
+			if (d > 0) {
+				fm->deemph_l += (d + fm->deemph_a/2) / fm->deemph_a;
+			} else {
+				fm->deemph_l += (d - fm->deemph_a/2) / fm->deemph_a;
+			}
+			fm->result[i] = (int16_t)fm->deemph_l;
+			/* right */
+			d = fm->result[i + 1] - fm->deemph_r;
+			if (d > 0) {
+				fm->deemph_r += (d + fm->deemph_a/2) / fm->deemph_a;
+			} else {
+				fm->deemph_r += (d - fm->deemph_a/2) / fm->deemph_a;
+			}
+			fm->result[i + 1] = (int16_t)fm->deemph_r;
 		}
-		fm->result[i] = (int16_t)avg;
+	} else {
+		for (i = 0; i < fm->result_len; i++) {
+			d = fm->result[i] - fm->deemph_l;
+			if (d > 0) {
+				fm->deemph_l += (d + fm->deemph_a/2) / fm->deemph_a;
+			} else {
+				fm->deemph_l += (d - fm->deemph_a/2) / fm->deemph_a;
+			}
+			fm->result[i] = (int16_t)fm->deemph_l;
+		}
 	}
 }
 
@@ -995,16 +1134,22 @@ void demod_init(struct demod_state *s)
 	s->comp_fir_size = 0;
 	s->prev_index = 0;
 	s->post_downsample = 1;  // once this works, default = 4
-	s->custom_atan = 0;
-	s->deemph = 0;
-	s->rate_out2 = -1;  // flag for disabled
+	s->custom_atan = 1;
+	s->deemph = 0.000075;
+	s->rate_out2 = 48000;
 	s->mode_demod = &fm_demod;
 	s->pre_j = s->pre_r = s->now_r = s->now_j = 0;
 	s->prev_lpr_index = 0;
 	s->deemph_a = 0;
+	s->deemph_l = 0;
+	s->deemph_r = 0;
 	s->now_lpr = 0;
 	s->dc_block = 0;
 	s->dc_avg = 0;
+	s->lpr.mode = 0;
+	s->lpr.freq = 17000;
+	s->lpr.size = 64;
+	s->stereo = 0;
 	pthread_rwlock_init(&s->rw, NULL);
 	pthread_cond_init(&s->ready, NULL);
 	pthread_mutex_init(&s->ready_m, NULL);
@@ -1020,7 +1165,7 @@ void demod_cleanup(struct demod_state *s)
 
 void output_init(struct output_state *s)
 {
-	s->rate = DEFAULT_SAMPLE_RATE;
+	s->rate = 48000;
 	pthread_rwlock_init(&s->rw, NULL);
 	pthread_cond_init(&s->ready, NULL);
 	pthread_mutex_init(&s->ready_m, NULL);
@@ -1036,9 +1181,9 @@ void output_cleanup(struct output_state *s)
 void controller_init(struct controller_state *s)
 {
 	s->freqs[0] = 100000000;
-	s->freq_len = 0;
+	s->freq_len = 1;
 	s->edge = 0;
-	s->wb_mode = 0;
+	s->wb_mode = 1; // Set to wbfm
 	pthread_cond_init(&s->hop, NULL);
 	pthread_mutex_init(&s->hop_m, NULL);
 }
@@ -1099,9 +1244,14 @@ static void *connection_thread_fn(void *arg)
 	};
 
 	// 0x18 is sample rate, 0x1c is rate * channels * bytes per sample
-	char WAVHeader[] = {
+	char WAVHeaderMono[] = {
 	0x52,0x49, 0x46,0x46, 0x64,0x19, 0xff,0x7f, 0x57,0x41, 0x56,0x45, 0x66,0x6d, 0x74,0x20,
 	0x10,0x00, 0x00,0x00, 0x01,0x00, 0x01,0x00, 0x80,0xbb, 0x00,0x00, 0x80,0xbb, 0x00,0x00,
+	0x02,0x00, 0x10,0x00, 0x64,0x61, 0x74,0x61, 0x40,0x19, 0xff,0x7f, 0x00,0x00, 0x00,0x00
+	};
+	char WAVHeaderStereo[] = {
+	0x52,0x49, 0x46,0x46, 0x64,0x19, 0xff,0x7f, 0x57,0x41, 0x56,0x45, 0x66,0x6d, 0x74,0x20,
+	0x10,0x00, 0x00,0x00, 0x01,0x00, 0x02,0x00, 0x80,0xbb, 0x00,0x00, 0x80,0xbb, 0x00,0x00,
 	0x02,0x00, 0x10,0x00, 0x64,0x61, 0x74,0x61, 0x40,0x19, 0xff,0x7f, 0x00,0x00, 0x00,0x00
 	};
 
@@ -1109,6 +1259,7 @@ static void *connection_thread_fn(void *arg)
 	int TCPReadCount;
 	bool isConnection;
 	int ConnectionDescNew;
+	unsigned int isStereo = 0;
 
 	while (!do_exit)
 	{
@@ -1148,7 +1299,7 @@ static void *connection_thread_fn(void *arg)
 
 		if(!strncmp(TCPRead,"GET",3))
 		{
-			sscanf(TCPRead,"GET /%d",&controller.freqs[0]);
+			sscanf(TCPRead,"GET /%d/%d",&controller.freqs[0],&isStereo);
 			printf("Start streaming on frequency: %d Hz\n",controller.freqs[0]);
 
 			// Tune
@@ -1156,8 +1307,28 @@ static void *connection_thread_fn(void *arg)
 			verbose_set_frequency(dongle.dev, dongle.freq);
 
 			// Start streaming
-			send(ConnectionDesc, StreamStart, sizeof(StreamStart),MSG_NOSIGNAL);
-			send(ConnectionDesc, WAVHeader, sizeof(WAVHeader),0);
+			send(ConnectionDesc, StreamStart, sizeof(StreamStart), MSG_NOSIGNAL);
+
+			if(isStereo)
+			{
+				printf("Stereo demodulation\n");
+
+				demod.deemph = 0.00005;
+				demod.stereo = 1;
+				demod.lpr.mode = 1;
+
+				send(ConnectionDesc, WAVHeaderStereo, sizeof(WAVHeaderStereo),0);
+			}
+			else // Mono
+			{
+				printf("Mono demodulation\n");
+
+				demod.deemph = 0.000075;
+				demod.lpr.mode = 0;
+				demod.stereo = 0;
+
+				send(ConnectionDesc, WAVHeaderMono, sizeof(WAVHeaderMono),0);
+			}
 
 			isStartStream = true;
 		}
@@ -1216,11 +1387,7 @@ int main(int argc, char **argv)
 	int dev_given = 0;
 	int custom_ppm = 0;
 
-    printf("RTL SDR FM Streamer Version ");
-    printf(VERSION);
-    printf("Based on \"rtl_fm\", see http://sdr.osmocom.org/trac/wiki/rtl-sdr for details\n");
-    printf("Modified by Albrecht Lohoefener <albrechtloh@gmx.de>\n");
-    printf("License GPL\n\n");
+    printf("RTL SDR FM Streamer Version %s\n",VERSION);
 
 	dongle_init(&dongle);
 	demod_init(&demod);
@@ -1229,32 +1396,7 @@ int main(int argc, char **argv)
 
     isStartStream = false;
 
-    /* Default parameters */
-
-    // Set to wbfm
-    controller.wb_mode = 1;
-    demod.mode_demod = &fm_demod;
-    demod.rate_in = 170000;
-    demod.rate_out = 170000;
-    demod.rate_out2 = 32000;
-    demod.custom_atan = 1;
-    //demod.post_downsample = 4;
-    demod.deemph = 1;
-    demod.squelch_level = 0;
-
-    // sample rate "-s 240000"
-    demod.rate_in = 240000;
-    demod.rate_out = 240000;
-
-    // resample rate "-r 48000"
-    output.rate = 48000;
-    demod.rate_out2 = 48000;
-
-    // frequency "-f 100M"
-    controller.freqs[controller.freq_len] = 100000000;
-    controller.freq_len++;
-
-    while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:h:P:v")) != -1) {
+    while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:h:P:v:X")) != -1) {
 		switch (opt) {
 		case 'd':
 			dongle.dev_index = verbose_device_search(optarg);
@@ -1350,6 +1492,24 @@ int main(int argc, char **argv)
 				demod.squelch_level = 0;}
 			break;
 
+		case 'X':
+			printf("Start with stereo support\n");
+			controller.wb_mode = 1;
+			demod.stereo = 1;
+			demod.mode_demod = &fm_demod;
+			demod.rate_in = 240000;
+			demod.rate_out = 240000;
+			output.rate = 48000;
+			demod.rate_out2 = 48000;
+			demod.custom_atan = 1;
+			//demod.post_downsample = 1;
+			demod.deemph = 0.00005;
+			demod.squelch_level = 0;
+			demod.lpr.mode = 1;
+			demod.lpr.freq = 17000;
+			demod.lpr.size = 64;
+			break;
+
 		 case 'P':
 			 connection.serv_addr.sin_port = htons((uint32_t)atofs(optarg));
 				printf("Use IP port %u\n",(uint32_t)atofs(optarg));
@@ -1358,7 +1518,6 @@ int main(int argc, char **argv)
 		 case 'v':
 				printf(VERSION);
 			break;
-
 
 		case 'h':
 		default:
@@ -1415,7 +1574,8 @@ int main(int argc, char **argv)
 #endif
 
 	if (demod.deemph) {
-		demod.deemph_a = (int)round(1.0/((1.0-exp(-1.0/(demod.rate_out * 75e-6)))));
+		//fprintf(stderr, "De-epmhasis IIR: %.1f us\n", demod.deemph * 1e6);
+		demod.deemph_a = (int)lrint(1.0/((1.0-exp(-1.0/((double)demod.rate_out * demod.deemph)))));
 	}
 
 	/* Set the tuner gain */
@@ -1440,6 +1600,8 @@ int main(int argc, char **argv)
 			exit(1);
 		}
 	}
+
+	build_low_pass_real(&demod);
 
 	/* Reset endpoint before we start reading from it (mandatory) */
 	verbose_reset_buffer(dongle.dev);
