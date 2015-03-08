@@ -442,10 +442,10 @@ void low_pass_real(struct demod_state *fm)
 	int fast = (int)fm->rate_out;
 	int slow = fm->rate_out2;
 	switch (fm->lpr.mode) {
-/* simple square window FIR */
-// add support for upsampling?
 	case 0:
 		// Mono low pass
+		// simple square window FIR
+		// add support for upsampling?
 		while (i < fm->result_len) {
 			fm->now_lpr += fm->result[i];
 				i++;
@@ -464,28 +464,40 @@ void low_pass_real(struct demod_state *fm)
 		while (i < fm->result_len)
 		{
 			fm->lpr.br[fm->lpr.pos] = fm->result[i++];
+
+			// Perform FIR filters
 			for (i3 = 0, i4 = fm->lpr.pos, vm = 0, vp = 0, vs = 0; i3 < fm->lpr.size; i3++) {
 				if (++i4 == fm->lpr.size) i4 = 0;
-				vm+= (int)(fm->lpr.br[i4] * fm->lpr.fm[i3]);
-				vp+= (int)(fm->lpr.br[i4] * fm->lpr.fp[i3]);
-				vs+= (int)(fm->lpr.br[i4] * fm->lpr.fs[i3]);
+				vm+= (int)(fm->lpr.br[i4] * fm->lpr.fm[i3]); // L+R low pass (0 Hz ... 17 kHz)
+				vp+= (int)(fm->lpr.br[i4] * fm->lpr.fp[i3]); // Pilot frequency band pass (18 kHz ... 20 kHz) --> filters out the 19 kHz pilot frequency
+				vs+= (int)(fm->lpr.br[i4] * fm->lpr.fs[i3]); // L-R band pass (21 kHz ... 55 kHz)
 			}
-			//printf("vm: %i vp: %i vs: %i\n",vm,vp,vs);
-			vp/= fm->lpr.sum;
-			fm->lpr.bm[fm->lpr.pos] = (int16_t)(vm / fm->lpr.sum);
+			vp/= fm->lpr.sum; // scale to 32768
+			fm->lpr.bm[fm->lpr.pos] = (int16_t)(vm / fm->lpr.sum); // scale to 32768
+
+			// AM L-R demodulation
+			// sin2atan2f(...) doubles the pilot frequency 19 kHz --> 38 kHz
+			// vs * sin2atan2f(...) AM demodulation
 			fm->lpr.bs[fm->lpr.pos] = (int16_t)(lrintf((float) vs * sin2atan2f(vp * fm->lpr.swf, vp * fm->lpr.cwf - fm->lpr.pp * 32767)) / fm->lpr.sum);
 			fm->lpr.pp = vp;
-			if (++fm->lpr.pos == fm->lpr.size) fm->lpr.pos = 0;
-			if ((fm->prev_lpr_index+= slow) < fast) continue;
+
+			if (++fm->lpr.pos == fm->lpr.size)
+				fm->lpr.pos = 0;
+			if ((fm->prev_lpr_index+= slow) < fast)
+				continue;
+
 			fm->prev_lpr_index-= fast;
+
+			// Perform FIR filters
 			for (i3 = 0, i4 = fm->lpr.pos, vm = 0, vs = 0; i3 < fm->lpr.size; i3++) {
-				vm+= (int)(fm->lpr.bm[i4] * fm->lpr.fm[i3]);
-				vs+= (int)(fm->lpr.bs[i4] * fm->lpr.fm[i3]);
+				vm+= (int)(fm->lpr.bm[i4] * fm->lpr.fm[i3]); // low pass (0 Hz ... 17 kHz)
+				vs+= (int)(fm->lpr.bs[i4] * fm->lpr.fm[i3]); // low pass (0 Hz ... 17 kHz), removes unwanted AM demodulation high frequencies
 				if (++i4 == fm->lpr.size) i4 = 0;
 			}
+
+			// Calculate stereo signal
 			fm->result[i2] = (int16_t)((vm + vs) / fm->lpr.sum);
 			fm->result[i2 + 1] = (int16_t)((vm - vs) / fm->lpr.sum);
-			//fprintf(stderr,"l: %d r: %d diff %i\n",fm->result[i2],fm->result[i2 + 1], (int)(fm->result[i2] - fm->result[i2 + 1]));
 			i2+= 2;
 		}
 		}break;
@@ -921,14 +933,14 @@ void full_demod(struct demod_state *d)
 	// use nicer filter here too?
 	if (d->post_downsample > 1) {
 		d->result_len = low_pass_simple(d->result, d->result_len, d->post_downsample);}
-	if (d->deemph) {
-		deemph_filter(d);}
 	if (d->dc_block) {
 		dc_block_filter(d);}
 	if (d->rate_out2 > 0) {
 		low_pass_real(d);
 		//arbitrary_resample(d->result, d->result, d->result_len, d->result_len * d->rate_out2 / d->rate_out);
 	}
+	if (d->deemph) {
+		deemph_filter(d);}
 }
 
 static void rtlsdr_callback(unsigned char *buf, uint32_t len, void *ctx)
@@ -1005,7 +1017,7 @@ static void *output_thread_fn(void *arg)
         	SentNum = send(ConnectionDesc, (char*) s->result, s->result_len * 2,MSG_NOSIGNAL);
 			if(SentNum<0)
 			{
-				printf("Error sending stream: \"%s\". Close the connection!\n",strerror(errno));
+				fprintf(stderr,"Error sending stream: \"%s\". Close the connection!\n",strerror(errno));
 
 				// Close connection
 				close(ConnectionDesc);
@@ -1264,7 +1276,7 @@ static void *connection_thread_fn(void *arg)
 	while (!do_exit)
 	{
 
-		printf("Waiting for connection...\n");
+		fprintf(stderr,"Waiting for connection...\n");
 		ConnectionDescNew = accept(pconnection->SocketDesc, (struct sockaddr *)&pconnection->client_addr, &pconnection->size);
 
 		// Accept only one connection thus close old connection
@@ -1272,10 +1284,10 @@ static void *connection_thread_fn(void *arg)
 		close(ConnectionDesc);
 
 		if (ConnectionDescNew == -1)
-			printf("Failed accepting connection\n");
+			fprintf(stderr,"Failed accepting connection\n");
 		else
 		{
-			printf("Connected\n");
+			fprintf(stderr,"Connected\n");
 			ConnectionDesc = ConnectionDescNew;
 
 			// Start reading samples from dongle
@@ -1289,18 +1301,18 @@ static void *connection_thread_fn(void *arg)
 			TCPRead[TCPReadCount]='\0';
 		}
 		else
-			printf("Error: %s (%i)\n",strerror(errno),errno);
+			fprintf(stderr,"Error: %s (%i)\n",strerror(errno),errno);
 
 		if(!strncmp(TCPRead,"HEAD",4))
 		{
-			printf("Send OK\n");
+			fprintf(stderr,"Send OK\n");
 			send(ConnectionDesc, HTTP_OK, sizeof(HTTP_OK),MSG_NOSIGNAL);
 		}
 
 		if(!strncmp(TCPRead,"GET",3))
 		{
 			sscanf(TCPRead,"GET /%d/%d",&controller.freqs[0],&isStereo);
-			printf("Start streaming on frequency: %d Hz\n",controller.freqs[0]);
+			fprintf(stderr,"Start streaming on frequency: %d Hz\n",controller.freqs[0]);
 
 			// Tune
 			optimal_settings(controller.freqs[0], demod.rate_in);
@@ -1311,7 +1323,7 @@ static void *connection_thread_fn(void *arg)
 
 			if(isStereo)
 			{
-				printf("Stereo demodulation\n");
+				fprintf(stderr,"Stereo demodulation\n");
 
 				demod.deemph = 0.00005;
 				demod.stereo = 1;
@@ -1321,7 +1333,7 @@ static void *connection_thread_fn(void *arg)
 			}
 			else // Mono
 			{
-				printf("Mono demodulation\n");
+				fprintf(stderr,"Mono demodulation\n");
 
 				demod.deemph = 0.000075;
 				demod.lpr.mode = 0;
@@ -1360,7 +1372,7 @@ void TCPSetup(connection_state *pconnection)
 
 	// A valid descriptor is always a positive value
 	if(pconnection->SocketDesc < 0)
-	  printf("Failed creating socket\n");
+	  fprintf(stderr,"Failed creating socket\n");
 
 	// Fill server's address family
 	pconnection->serv_addr.sin_family = AF_INET;
@@ -1372,7 +1384,7 @@ void TCPSetup(connection_state *pconnection)
 
 	// Bin to socket
 	if (bind(pconnection->SocketDesc, (struct sockaddr *)&pconnection->serv_addr, sizeof(pconnection->serv_addr)) < 0)
-		printf("Failed to bind\n");
+		fprintf(stderr,"Failed to bind\n");
 
 	// Allow 5 connections
 	listen(pconnection->SocketDesc, 5);
@@ -1387,7 +1399,7 @@ int main(int argc, char **argv)
 	int dev_given = 0;
 	int custom_ppm = 0;
 
-    printf("RTL SDR FM Streamer Version %s\n",VERSION);
+    fprintf(stderr,"RTL SDR FM Streamer Version %s\n",VERSION);
 
 	dongle_init(&dongle);
 	demod_init(&demod);
@@ -1493,7 +1505,7 @@ int main(int argc, char **argv)
 			break;
 
 		case 'X':
-			printf("Start with stereo support\n");
+			fprintf(stderr,"Start with stereo support\n");
 			controller.wb_mode = 1;
 			demod.stereo = 1;
 			demod.mode_demod = &fm_demod;
@@ -1512,7 +1524,7 @@ int main(int argc, char **argv)
 
 		 case 'P':
 			 connection.serv_addr.sin_port = htons((uint32_t)atofs(optarg));
-				printf("Use IP port %u\n",(uint32_t)atofs(optarg));
+				fprintf(stderr,"Use IP port %u\n",(uint32_t)atofs(optarg));
 			break;
 
 		 case 'v':
