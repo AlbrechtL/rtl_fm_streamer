@@ -6,10 +6,8 @@
  * Copyright (C) 2012 by Hoernchen <la@tfc-server.de>
  * Copyright (C) 2012 by Kyle Keen <keenerd@gmail.com>
  * Copyright (C) 2013 by Elias Oenal <EliasOenal@gmail.com>
+ * Copyright (C) 2015 by Miroslav Slugen <thunder.m@email.cz>
  * Copyright (C) 2015 by Albrecht Lohoefener <albrechtloh@gmx.de>
- *
- * FM stereo demodulation "LP Real: FIR hamming stereo" copyright (C) 2013 by Miroslav Slugen <thunder.m@email.cz>
- * More information http://comments.gmane.org/gmane.comp.mobile.osmocom.sdr/299
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -1680,10 +1678,11 @@ void demod_init(struct demod_state *s)
     s->deemph = DEEMPHASIS_FM_EU;
     s->offset_tuning = 0;
     s->rate_out2 = 48000;
-    s->mode_demod = &fm_demod;
+    s->mode_demod = &fm_demod_f32;
     s->pre_j = s->pre_r = s->now_r = s->now_j = 0;
     s->pre_j_f32 = s->pre_r_f32 = 0;
     s->prev_lpr_index = 0;
+    s->deemph = DEEMPHASIS_FM_EU;
     s->deemph_a = 0;
     s->deemph_l = 0;
     s->deemph_r = 0;
@@ -1693,15 +1692,15 @@ void demod_init(struct demod_state *s)
     s->now_lpr = 0;
     s->dc_block = 0;
     s->dc_avg = 0;
-    s->lpr.mode = 0;
-    s->lpr.size = 0;
+    s->lpr.mode = 2;
+    s->lpr.size = 90; /* RPI can do only 90, 128 is optimal */
     s->lpr.br = NULL;
     s->lpr.bm = NULL;
     s->lpr.bs = NULL;
     s->lpr.fm = NULL;
     s->lpr.fp = NULL;
     s->lpr.fs = NULL;
-    s->f32 = 0;
+    s->f32 = 1;
     pthread_rwlock_init(&s->rw, NULL);
     pthread_cond_init(&s->ready, NULL);
     pthread_mutex_init(&s->ready_m, NULL);
