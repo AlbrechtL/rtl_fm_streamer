@@ -1482,14 +1482,14 @@ static void *demod_thread_fn(void *arg)
             output_buffer_wpos+= len;
             output_buffer_size+= len;
             /* begin new read with zero */
-            if (output_buffer_wpos == output_buffer_size_max) output_buffer_wpos = 0;
+            if (output_buffer_wpos >= output_buffer_size_max) output_buffer_wpos = 0;
         } else {
             /* buffer_size_max must be multiple of len */
             memcpy(output_buffer, d->result, len);
             output_buffer_wpos = len;
             output_buffer_size+= len;
         }
-        /* already droped some data, so print info */
+        /* already dropped some data, so print info */
         if (output_buffer_size > output_buffer_size_max) {
             fprintf(stderr,"dropping output buffer: %u B\n", output_buffer_size - output_buffer_size_max);
             output_buffer_size = output_buffer_size_max;
@@ -1505,8 +1505,8 @@ static void *output_thread_fn(void *arg)
 {
     int SentNum=0;
     struct output_state *s = arg;
-    char buf[4096];
-    uint32_t len = 4096;
+    char buf[16384];
+    uint32_t len = 16384;
 
     while (!do_exit) {
         while (output_buffer_size < len) {
@@ -1519,7 +1519,7 @@ static void *output_thread_fn(void *arg)
         memcpy(buf, output_buffer + output_buffer_rpos, len);
         output_buffer_rpos+= len;
         output_buffer_size-= len;
-        if (output_buffer_rpos == output_buffer_size_max) output_buffer_rpos = 0;
+        if (output_buffer_rpos >= output_buffer_size_max) output_buffer_rpos = 0;
         pthread_rwlock_unlock(&s->rw);
 
         if(isStartStream)

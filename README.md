@@ -36,10 +36,13 @@ To use this tool in KODI simply create a *.strm file e.g. "FM\_93_2.strm"
  
     http://localhost:2346/93200000
 
-Known Problems
+Limitations
 --------------
 - Server accepts only one client
-- Stereo demodulation is buggy. Please use [this] (https://github.com/AlbrechtL/rtl_fm_streamer/tree/b42d89d958aad062059c1ebcc869f1a5e83d3b49) commit for a low quality but working stereo decoder
+
+Known Problems
+--------------
+- Occasional segmentation fault after disconnect of a client
 
 Support
 -------
