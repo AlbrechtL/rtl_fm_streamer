@@ -2,7 +2,7 @@ RTL SDR FM Streamer
 ===================
 Turns your Realtek RTL2832 based DVB dongle into a FM radio receiver.
 
-Discreption
+Description
 -----------
 RTL SDR FM Streamer is a small tool to stream FM radio by using a DVB-T dongle to a client e.g Kodi, VLC or mplayer.
 
@@ -36,14 +36,21 @@ To use this tool in KODI simply create a *.strm file e.g. "FM\_93_2.strm"
  
     http://localhost:2346/93200000
 
+Performance
+--------------
+Mono: Should run a many small devices including a (tested on a Raspberry Pi 1).
+Stereo: Needs a lot of more CPU power compared to mono (tested on a Raspberry Pi 2).
+On modern PCs (x86, x64) mono and stereo should be possible easily (tested with an Intel CORE i7 and an Intel CORE 2 Duo)
+
 Limitations
 --------------
 - Server accepts only one client
 
 Known Problems
 --------------
-- Occasional segmentation fault after disconnect of a client
+- Occasional segmentation faults after disconnect of a client
 
 Support
 -------
+OpenELEC thread: [http://openelec.tv/forum/126-3rd-party/75537-fm-radio-receiver-for-kodi-for-the-raspberry-pi-1](http://openelec.tv/forum/126-3rd-party/75537-fm-radio-receiver-for-kodi-for-the-raspberry-pi-1)
 Write me an e-mail: Albrecht <albrechtloh@gmx.de>
