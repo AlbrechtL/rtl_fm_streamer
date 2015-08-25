@@ -82,6 +82,7 @@
 
 #include "rtl-sdr.h"
 #include "convenience/convenience.h"
+#include "jsonrpc-c/jsonrpc-c.h"
 
 #define VERSION "0.0.5"
 
@@ -258,12 +259,26 @@ typedef struct
     pthread_t ConnectionThread;
 }connection_state;
 
+typedef struct
+{
+    // Socket which is JSON-RPC is listening
+    int Port;
+
+    struct jrpc_server Server;
+
+    float  RMSShadowBuf[MAXIMUM_BUF_LENGTH << 1];
+    int    RMSShadowBuf_len;
+
+    pthread_t thread;
+}json_rpc_state;
+
 // multiple of these, eventually
 struct dongle_state dongle;
 struct demod_state demod;
 struct output_state output;
 struct controller_state controller;
 connection_state connection;
+json_rpc_state json_rpc;
 
 
 void usage(void)
@@ -757,9 +772,9 @@ void lp_real_f32(struct demod_state *fm)
 
                 v = fm->lpr.br[j] + fm->lpr.br[l];
 
-                vm+= v * fm->lpr.fm[k];
-                vp+= v * fm->lpr.fp[k];
-                vs+= v * fm->lpr.fs[k];
+                vm+= v * fm->lpr.fm[k]; // L+R low pass (0 Hz ... 17 kHz)
+                vp+= v * fm->lpr.fp[k]; // Pilot frequency band pass (18 kHz ... 20 kHz) --> filters out the 19 kHz
+                vs+= v * fm->lpr.fs[k]; // L-R band pass (21 kHz ... 55 kHz)
 
                 /* next value before storing, easiest way to get complementary index */
                 if (l == 0) {
@@ -770,6 +785,10 @@ void lp_real_f32(struct demod_state *fm)
             }
 
             fm->lpr.bm[fm->lpr.pos] = vm;
+
+            // AM L-R demodulation
+            // sin2atan2f(...) doubles the pilot frequency 19 kHz --> 38 kHz
+            // vs * sin2atan2_f32(...) AM demodulation
             fm->lpr.bs[fm->lpr.pos] = vs * sin2atan2_f32(vp * fm->lpr.swf, vp * fm->lpr.cwf - fm->lpr.pp);
             fm->lpr.pp = vp;
 
@@ -786,14 +805,15 @@ void lp_real_f32(struct demod_state *fm)
                         l--;
                     }
 
-                    vm+= (fm->lpr.bm[j] + fm->lpr.bm[l]) * fm->lpr.fm[k];
-                    vs+= (fm->lpr.bs[j] + fm->lpr.bs[l]) * fm->lpr.fm[k];
+                    vm+= (fm->lpr.bm[j] + fm->lpr.bm[l]) * fm->lpr.fm[k]; // low pass (0 Hz ... 17 kHz)
+                    vs+= (fm->lpr.bs[j] + fm->lpr.bs[l]) * fm->lpr.fm[k]; // low pass (0 Hz ... 17 kHz), removes unwanted AM demodulation high frequencies
 
                     /* next value after storing */
                     if (++j == fm->lpr.size) j = 0;
                 }
 
                 /* we can overwrite input, but not for downsample input buffer 16384 */
+                // Calculate stereo signal
                 ib[o] = vm + vs;
                 ib[o + 1] = vm - vs;
                 o+= 2;
@@ -1054,7 +1074,7 @@ void fm_demod_f32(struct demod_state *fm)
     fm->result_len = 0;
 
     for (i = 0; i < fm->lp_len; i+= 2) {
-        /* atanf function needs more computer power, better is to use aproximation */
+        /* atanf function needs more computer power, better is to use approximation */
         v = atan2_lagrange_f32(fm->pre_r_f32 * ib[i + 1] - fm->pre_j_f32 * ib[i], ib[i] * fm->pre_r_f32 + ib[i + 1] * fm->pre_j_f32);
         fm->pre_r_f32 = ib[i];
         fm->pre_j_f32 = ib[i + 1];
@@ -1333,6 +1353,10 @@ void full_demod(struct demod_state *d)
     } else {
         lp_f32(d);
     }
+
+    // Shadow buffer to calculate the RMS
+    memcpy(json_rpc.RMSShadowBuf, d->lowpassed, d->lp_len * sizeof(float));
+    json_rpc.RMSShadowBuf_len = d->lp_len;
 
     /* power squelch */
     if ((d->squelch_level) && (!d->f32)) {
@@ -1928,12 +1952,72 @@ void TCPSetup(connection_state *pconnection)
 
     pconnection->size = sizeof(pconnection->client_addr);
 
-    // Bin to socket
+    // Bind to socket
     if (bind(pconnection->SocketDesc, (struct sockaddr *)&pconnection->serv_addr, sizeof(pconnection->serv_addr)) < 0)
         fprintf(stderr,"Failed to bind\n");
 
     // Allow 5 connections
     listen(pconnection->SocketDesc, 5);
+}
+
+cJSON * JsonRPC_SetFrequency(jrpc_context * ctx, cJSON * params, cJSON *id)
+{
+	int Frequency = 0;
+
+	if(params->child)
+	{
+		Frequency = params->child->valueint;
+
+		printf("Set frequency to %i Hz\n", Frequency);
+
+		controller.freqs[0] = Frequency;
+
+		// Tune
+		optimal_settings(controller.freqs[0], demod.rate_in);
+
+		// At this point this program can hang from unknown reasons
+		verbose_set_frequency(dongle.dev, dongle.freq);
+	}
+
+	return cJSON_CreateNumber(Frequency);
+}
+
+cJSON * JsonRPC_GetPowerLevel(jrpc_context * ctx, cJSON * params, cJSON *id)
+{
+	int i = 0;
+	double PowerLevel = 0;
+
+	// Calc the RMS
+    for(i=0; i<json_rpc.RMSShadowBuf_len; i=i+2)
+    {
+    	PowerLevel += json_rpc.RMSShadowBuf[i] * json_rpc.RMSShadowBuf[i];
+    }
+    PowerLevel /= json_rpc.RMSShadowBuf_len / 2;
+    PowerLevel  = sqrt(PowerLevel);
+
+    // Calc the DBFS
+    PowerLevel = 20 * log10(PowerLevel);
+
+	return cJSON_CreateNumber(PowerLevel);
+}
+
+cJSON * JsonRPC_Exit(jrpc_context * ctx, cJSON * params, cJSON *id)
+{
+	jrpc_server_stop(&json_rpc.Server);
+	return cJSON_CreateString("Bye!");
+}
+
+static void *JsonRPC_thread_fn(void *arg)
+{
+	//json_rpc.Server.debug_level = 1; // Not working
+	jrpc_server_init(&json_rpc.Server, json_rpc.Port);
+	jrpc_register_procedure(&json_rpc.Server, JsonRPC_SetFrequency, "SetFrequency", NULL );
+	jrpc_register_procedure(&json_rpc.Server, JsonRPC_GetPowerLevel, "GetPowerLevel", NULL );
+	jrpc_register_procedure(&json_rpc.Server, JsonRPC_Exit, "Exit", NULL );
+	jrpc_server_run(&json_rpc.Server);
+	jrpc_server_destroy(&json_rpc.Server);
+
+	exit(0);
 }
 
 int main(int argc, char **argv)
@@ -1955,7 +2039,7 @@ int main(int argc, char **argv)
     isStartStream = false;
     isReading = false;
 
-    while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:h:P:v:XY")) != -1) {
+    while ((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:A:M:h:P:j:v:XY")) != -1) {
         switch (opt) {
         case 'd':
             dongle.dev_index = verbose_device_search(optarg);
@@ -2081,10 +2165,17 @@ int main(int argc, char **argv)
             demod.lpr.size = 128;
             break;
 
+         // Port for the WAV HTTP server
          case 'P':
              connection.serv_addr.sin_port = htons((uint32_t)atofs(optarg));
                 fprintf(stderr,"Use IP port %u\n",(uint32_t)atofs(optarg));
             break;
+
+         // Port where JSON RPC is listening
+         case 'j':
+        	 json_rpc.Port = (int)atofs(optarg);
+				 fprintf(stderr,"Use JSON RPC IP port %i\n",(int)atofs(optarg));
+			 break;
 
          case 'v':
                 printf(VERSION);
@@ -2187,6 +2278,7 @@ int main(int argc, char **argv)
     pthread_create(&output.thread, NULL, output_thread_fn, (void *)(&output));
     pthread_create(&demod.thread, NULL, demod_thread_fn, (void *)(&demod));
     pthread_create(&connection.ConnectionThread, NULL, connection_thread_fn, (void *)(&connection));
+    pthread_create(&json_rpc.thread, NULL, JsonRPC_thread_fn, (void *)(&json_rpc));
 
     while (!do_exit)
     {
@@ -2206,6 +2298,7 @@ int main(int argc, char **argv)
     pthread_join(output.thread, NULL);
     safe_cond_signal(&controller.hop, &controller.hop_m);
     pthread_join(controller.thread, NULL);
+    pthread_join(json_rpc.thread, NULL);
 
     // Close TCP connection
     close(ConnectionDesc);

@@ -68,10 +68,16 @@ endif()
 ########################################################################
 # Setup libraries used in executables
 ########################################################################
+
+# JSON-RPC lib
+add_subdirectory(jsonrpc-c)
+
+# convenience lib
 add_library(convenience_static STATIC
     convenience/convenience.c
 )
 
+# libgetopt lib
 if(WIN32)
 add_library(libgetopt_static STATIC
     getopt/getopt.c
@@ -94,11 +100,11 @@ target_link_libraries(rtl_fm_streamer rtlsdr_shared convenience_static
 )
 
 if(UNIX)
-target_link_libraries(rtl_fm_streamer m)
+target_link_libraries(rtl_fm_streamer m jsonrpc-c)
 endif()
 
 if(WIN32)
-target_link_libraries(rtl_fm_streamer libgetopt_static)
+target_link_libraries(rtl_fm_streamer libgetopt_static jsonrpc-c)
 set_property(TARGET rtl_fm_streamer APPEND PROPERTY COMPILE_DEFINITIONS "rtlsdr_STATIC" )
 endif()
 ########################################################################
