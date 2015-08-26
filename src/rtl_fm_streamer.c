@@ -1310,6 +1310,18 @@ void controller_cleanup(struct controller_state *s)
 	pthread_mutex_destroy(&s->hop_m);
 }
 
+void connection_init(connection_state *pconnection)
+{
+	pconnection->SocketDesc = 0;
+	pconnection->size = 0;
+
+	// Initialize the server address struct to zero
+	bzero((char *) &pconnection->serv_addr, sizeof(pconnection->serv_addr));
+	pconnection->serv_addr.sin_port = htons(2346); //default port
+
+	bzero((char *) &pconnection->client_addr, sizeof(pconnection->client_addr));
+}
+
 void sanity_checks(void)
 {
 	if (controller.freq_len == 0)
@@ -1477,10 +1489,6 @@ void TCPSetup(connection_state *pconnection)
 {
 	int optval;
 
-	// Initialize the server address struct to zero
-	bzero((char *) &pconnection->serv_addr, sizeof(pconnection->serv_addr));
-	pconnection->serv_addr.sin_port = htons(2346); //default port
-
 	// Create socket of domain - Internet (IP) address, type - Stream based (TCP) and protocol unspecified
 	// since it is only useful when underlying stack allows more than one protocol and we are choosing one.
 	// 0 means choose the default protocol.
@@ -1590,6 +1598,7 @@ int main(int argc, char **argv)
 	demod_init(&demod);
 	output_init(&output);
 	controller_init(&controller);
+	connection_init(&connection);
 
 	isStartStream = false;
 	isReading = false;
