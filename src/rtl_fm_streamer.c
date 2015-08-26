@@ -1864,7 +1864,7 @@ int main(int argc, char **argv)
 	pthread_join(output.thread, NULL);
 	safe_cond_signal(&controller.hop, &controller.hop_m);
 	pthread_join(controller.thread, NULL);
-	pthread_join(json_rpc.thread, NULL);
+
 
 	// Close TCP connection
 	close(ConnectionDesc);
