@@ -79,7 +79,7 @@
 #include "convenience/convenience.h"
 #include "jsonrpc-c/jsonrpc-c.h"
 
-#define VERSION "0.0.5"
+#define VERSION "0.0.6"
 
 #define DEFAULT_SAMPLE_RATE		240000
 #define DEFAULT_BUF_LENGTH		(1 * 16384)
@@ -1322,6 +1322,11 @@ void connection_init(connection_state *pconnection)
 	bzero((char *) &pconnection->client_addr, sizeof(pconnection->client_addr));
 }
 
+void json_rpc_init(json_rpc_state *json_rpc)
+{
+	json_rpc->Port = 2345;
+}
+
 void sanity_checks(void)
 {
 	if (controller.freq_len == 0)
@@ -1599,6 +1604,7 @@ int main(int argc, char **argv)
 	output_init(&output);
 	controller_init(&controller);
 	connection_init(&connection);
+	json_rpc_init(&json_rpc);
 
 	isStartStream = false;
 	isReading = false;
