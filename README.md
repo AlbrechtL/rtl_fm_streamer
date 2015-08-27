@@ -43,10 +43,10 @@ rtl_fm_streamer comes with a [JSON-RPC](https://en.wikipedia.org/wiki/JSON-RPC) 
     $ ./rtl_fm_streamer -j 1234
     
 **Provided methods**
-| Method | Parameters | Return | Description
-|---|---|---|---|
-| SetFrequency | Frequency in Hz | Frequency in Hz | Tunes to a given frequency |
-| GetPowerLevel | None  |  Power level in DBFS | Returns the current power level in DBFS |
+Method | Parameters | Return | Description
+---|---|---|---
+SetFrequency | Frequency in Hz | Frequency in Hz | Tunes to a given frequency
+GetPowerLevel | None  |  Power level in DBFS | Returns the current power level in DBFS
 
 **Example Set Frequency**
 client  --> rtl_fm_streamer
