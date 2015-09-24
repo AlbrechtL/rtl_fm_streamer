@@ -26,11 +26,10 @@ e.g. port 12345
 Streaming
 ---------
 To connect to the server you can use KODI, VLC or mplayer. Just connect to the URL
-mono: "http://IP:port/FrequencyInHerz"
-mono: "http://IP:port/FrequencyInHerz/0"
-stereo: "http://IP:port/FrequencyInHerz/1"
 
-e.g. for 93.2 MHz: http://localhost:2346/93200000
+    mono: "http://IP:port/FrequencyInHerz"
+    mono: "http://IP:port/FrequencyInHerz/0"
+    stereo: "http://IP:port/FrequencyInHerz/1"
 
 To use this tool in KODI simply create a *.strm file e.g. "FM\_93_2.strm"
  
