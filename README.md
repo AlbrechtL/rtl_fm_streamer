@@ -82,10 +82,24 @@ To compile rtl_fm_streamer just do the following steps (install git, cmake and l
     rtl_fm_streame/build$ cmake ../
     rtl_fm_streame/build$ make
 
+Similar Projects
+----------------
+- FM Radio receiver based upon RTL-SDR as pvr addon for KODI
+  - http://esmasol.de/open-source/kodi-add-on-s/fm-radio-receiver/
+  - https://github.com/xbmc/xbmc/pull/6174
+  - https://github.com/AlwinEsch/pvr.rtl.radiofm
+- rtl_fm
+  - This tool is the base of rtl_fm_streamer
+  - http://sdr.osmocom.org/trac/wiki/rtl-sdr
+- sdr-j-fmreceiver
+  - http://www.sdr-j.tk/index.html
+- GPRX
+  - http://gqrx.dk
 
 Support
 -------
-OpenELEC thread: [http://openelec.tv/forum/126-3rd-party/75537-fm-radio-receiver-for-kodi-for-the-raspberry-pi-1](http://openelec.tv/forum/126-3rd-party/75537-fm-radio-receiver-for-kodi-for-the-raspberry-pi-1)
+OpenELEC thread: http://openelec.tv/forum/126-3rd-party/75537-fm-radio-receiver-for-kodi-for-the-raspberry-pi-1
+raspberrypi.org thread: https://www.raspberrypi.org/forums/viewtopic.php?f=38&t=122372
 
 Write me an e-mail: Albrecht <albrechtloh@gmx.de>
 
