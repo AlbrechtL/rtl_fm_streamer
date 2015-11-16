@@ -75,6 +75,7 @@ Building
 -------
 To compile rtl_fm_streamer just do the following steps (install git, cmake and libev first).
 
+    $ sudo apt-get install build-essential libusb-1.0-0-dev libev-dev
     $ git clone https://github.com/AlbrechtL/rtl_fm_streamer.git
     $ cd rtl_fm_streamer/
     rtl_fm_streamer$ mkdir build
