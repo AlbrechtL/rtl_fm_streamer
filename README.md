@@ -80,8 +80,8 @@ To compile rtl_fm_streamer just do the following steps (install git, cmake and l
     $ cd rtl_fm_streamer/
     rtl_fm_streamer$ mkdir build
     rtl_fm_streamer$ cd build
-    rtl_fm_streame/build$ cmake ../
-    rtl_fm_streame/build$ make
+    rtl_fm_streamer/build$ cmake ../
+    rtl_fm_streamer/build$ make
 
 Similar Projects
 ----------------
