@@ -1,10 +1,10 @@
 RTL SDR FM Streamer
 ===================
-Turns your Realtek RTL2832 based DVB dongle into a FM radio receiver.
+Turns your Realtek RTL2832 based DVB dongle into a FM radio stereo receiver.
 
 Description
 -----------
-RTL SDR FM Streamer is a small tool to stream FM radio by using a DVB-T dongle to a client e.g Kodi, VLC or mplayer.
+RTL SDR FM Streamer is a small tool to stream FM stereo radio by using a DVB-T dongle to a client e.g Kodi, VLC or mplayer.
 
 The DVB-T dongle has to be based on the Realtek RTL2832U.
 See [http://sdr.osmocom.org/trac/wiki/rtl-sdr](http://sdr.osmocom.org/trac/wiki/rtl-sdr) for more RTL SDR details.
