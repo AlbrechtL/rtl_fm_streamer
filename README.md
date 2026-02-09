@@ -74,7 +74,7 @@ Limitations
 
 Known Problems
 --------------
-- Occasional segmentation faults after disconnect of a client
+- Hopefully none ;-)
 
 Building
 -------
