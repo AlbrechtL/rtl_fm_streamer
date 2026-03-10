@@ -79,7 +79,7 @@
 #include "convenience/convenience.h"
 #include "jsonrpc-c/jsonrpc-c.h"
 
-#define VERSION "0.0.6"
+#define VERSION "0.0.7"
 
 #define DEFAULT_SAMPLE_RATE		240000
 #define DEFAULT_BUF_LENGTH		(1 * 16384)
@@ -124,8 +124,7 @@ uint32_t output_buffer_rpos = 0,
          output_buffer_size_max = 16 * MAXIMUM_BUF_LENGTH;
 
 static int ConnectionDesc;
-bool isStartStream;
-bool isReading;
+bool isReading, isStartStream, stopStreaming;
 
 struct lp_real
 {
@@ -1105,18 +1104,19 @@ output_thread_fn(void *arg)
 		if (isStartStream)
 		{
 			SentNum = send(ConnectionDesc, buf, len, MSG_NOSIGNAL);
-			if (SentNum < 0)
+			if (SentNum < 0 || stopStreaming)
 			{
 				fprintf(stderr, "Error sending stream: \"%s\". Close the connection!\n", strerror(errno));
 
 				// Close connection
 				close(ConnectionDesc);
-				isStartStream = false;
 
 				// Stop reading samples from dongle
 				rtlsdr_cancel_async(dongle.dev);
 				pthread_join(dongle.thread, NULL);
 				isReading = false;
+				stopStreaming = false;
+				isStartStream = false;	// needs to be the last step to avoid rtlsdr_cancel_async race condition
 			}
 		}
 	}
@@ -1431,9 +1431,13 @@ connection_thread_fn(void *arg)
 		ConnectionDescNew = accept(pconnection->SocketDesc, (struct sockaddr *) &pconnection->client_addr,
 				&pconnection->size);
 
-		// Accept only one connection thus close old connection
-		isStartStream = false;
-		close(ConnectionDesc);
+		// Accept only one connection thus gracefully close old connection
+		if (isStartStream)
+		{
+			stopStreaming = true;
+			while (isStartStream)
+				usleep(5000);
+		}
 
 		/* close old dongle thread */
 		if (isReading)
