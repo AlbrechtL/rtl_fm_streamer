@@ -1,19 +1,22 @@
 RTL SDR FM Streamer
 ===================
-Turns your Realtek RTL2832 based DVB dongle into a FM radio stereo receiver.
+Turns a Realtek RTL2832U based swradio device into an FM radio stereo receiver.
+
+WARNING: The swradio implementation is AI generated and it seems that the gain control is missing. Most likely you will hear only noise.
 
 Description
 -----------
-RTL SDR FM Streamer is a small tool to stream FM stereo radio by using a DVB-T dongle to a client e.g Kodi, VLC or mplayer.
+RTL SDR FM Streamer is a small tool to stream FM stereo radio by using the Linux kernel swradio API to a client such as Kodi, VLC or mplayer.
 
-The DVB-T dongle has to be based on the Realtek RTL2832U.
-See [http://sdr.osmocom.org/trac/wiki/rtl-sdr](http://sdr.osmocom.org/trac/wiki/rtl-sdr) for more RTL SDR details.
+The DVB-T dongle has to be based on the Realtek RTL2832U and exposed by the kernel as a swradio device such as `/dev/swradio0`.
 
 Usage
 -----
 Default port: 2346
 
     $ ./rtl_fm_streamer
+
+By default the streamer opens `/dev/swradio0`. Use `-d /dev/swradioN` to select a different kernel SDR device.
 
 **Docker Image**
 
@@ -36,9 +39,9 @@ To connect to the server you can use KODI, VLC or mplayer. Just connect to the U
     mono: "http://IP:port/FrequencyInHerz/0"
     stereo: "http://IP:port/FrequencyInHerz/1"
 
-To use this tool in KODI simply create a *.strm file e.g. "FM\_93_2.strm"
+To use this tool in KODI simply create a *.strm file e.g. "FM\_93_7.strm"
  
-    http://localhost:2346/93200000
+  http://localhost:12345/93700000/1
 
 JSON-RPC API
 --------------
@@ -56,11 +59,11 @@ GetPowerLevel | None  |  Power level in DBFS | Returns the current power level i
 **Example Set Frequency**
 client  --> rtl_fm_streamer
 
-    {"method": "SetFrequency", "params": [93200000]}
+    {"method": "SetFrequency", "params": [93700000]}
     
 rtl_fm_streamer  --> client
      
-    {"result": [93200000]}
+    {"result": [93700000]}
 
 Performance
 --------------
@@ -78,15 +81,22 @@ Known Problems
 
 Building
 -------
-To compile rtl_fm_streamer just do the following steps (install git, cmake and libev first).
+The current maintained build uses CMake and the Linux V4L2 SDR headers.
 
-    $ sudo apt-get install build-essential libusb-1.0-0-dev libev-dev
+  $ sudo apt-get install build-essential cmake
     $ git clone https://github.com/AlbrechtL/rtl_fm_streamer.git
     $ cd rtl_fm_streamer/
     rtl_fm_streamer$ mkdir build
     rtl_fm_streamer$ cd build
     rtl_fm_streamer/build$ cmake ../
     rtl_fm_streamer/build$ make
+
+At runtime the kernel must provide a swradio node for the RTL2832U, for example via `rtl2832_sdr`.
+
+Useful diagnostics:
+
+  $ v4l2-ctl --all --device=/dev/swradio0
+  $ v4l2-ctl --list-formats --device=/dev/swradio0
 
 Similar Projects
 ----------------
@@ -101,11 +111,4 @@ Similar Projects
   - http://www.sdr-j.tk/index.html
 - GPRX
   - http://gqrx.dk
-
-Support
--------
-OpenELEC thread: http://openelec.tv/forum/126-3rd-party/75537-fm-radio-receiver-for-kodi-for-the-raspberry-pi-1
-raspberrypi.org thread: https://www.raspberrypi.org/forums/viewtopic.php?f=38&t=122372
-
-Write me an e-mail: Albrecht <albrechtloh@gmx.de>
 

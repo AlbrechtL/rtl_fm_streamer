@@ -47,6 +47,12 @@
  *       fix oversampling
  */
 
+#ifndef _WIN32
+#define _GNU_SOURCE
+#define _XOPEN_SOURCE 700
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <errno.h>
 #include <signal.h>
 #include <string.h>
@@ -54,10 +60,15 @@
 #include <stdlib.h>
 
 #ifndef _WIN32
+#include <getopt.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
+#include <limits.h>
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
 #else
 #include <windows.h>
 #include <fcntl.h>
@@ -73,9 +84,7 @@
 
 #include <math.h>
 #include <pthread.h>
-#include <libusb.h>
 
-#include "rtl-sdr.h"
 #include "convenience/convenience.h"
 #include "jsonrpc-c/jsonrpc-c.h"
 
@@ -147,8 +156,8 @@ struct dongle_state
 {
 	int exit_flag;
 	pthread_t thread;
-	rtlsdr_dev_t *dev;
-	int dev_index;
+	swradio_dev_t *dev;
+	char device_path[PATH_MAX];
 	uint32_t freq;
 	uint32_t rate;
 	int gain;
@@ -297,7 +306,7 @@ void usage(void)
 			"\t    wbfm == -M fm -s 170k -o 4 -A fast -r 32k -l 0 -E deemp\n"
 			"\t    raw mode outputs 2x16 bit IQ pairs\n"
 			"\t[-s sample_rate (default: 24k)]\n"
-			"\t[-d device_index (default: 0)]\n"
+			"\t[-d /dev/swradioN (default: /dev/swradio0)]\n"
 			"\t[-g tuner_gain (default: automatic)]\n"
 			"\t[-l squelch_level (default: 0/off)]\n"
 			"\t[-p ppm_error (default: 0)]\n"
@@ -331,7 +340,6 @@ sighandler(int signum)
 	{
 		fprintf(stderr, "Signal caught, exiting!\n");
 		do_exit = 1;
-		rtlsdr_cancel_async(dongle.dev);
 		return TRUE;
 	}
 	return FALSE;
@@ -341,7 +349,6 @@ static void sighandler(int signum)
 {
 	fprintf(stderr, "Signal caught, exiting!\n");
 	do_exit = 1;
-	rtlsdr_cancel_async(dongle.dev);
 }
 #endif
 
@@ -1112,11 +1119,11 @@ output_thread_fn(void *arg)
 				close(ConnectionDesc);
 
 				// Stop reading samples from dongle
-				rtlsdr_cancel_async(dongle.dev);
+				dongle.exit_flag = 1;
 				pthread_join(dongle.thread, NULL);
 				isReading = false;
 				stopStreaming = false;
-				isStartStream = false;	// needs to be the last step to avoid rtlsdr_cancel_async race condition
+				isStartStream = false;
 			}
 		}
 	}
@@ -1128,7 +1135,34 @@ static void *
 dongle_thread_fn(void *arg)
 {
 	struct dongle_state *s = arg;
-	rtlsdr_read_async(s->dev, rtlsdr_callback, s, 0, 0);
+	unsigned char *buf;
+	ssize_t len;
+	size_t read_size;
+
+	read_size = swradio_get_buffer_size(s->dev);
+	if (read_size == 0) {
+		read_size = DEFAULT_BUF_LENGTH;
+	}
+
+	buf = malloc(read_size);
+	if (!buf) {
+		fprintf(stderr, "Failed to allocate swradio read buffer.\n");
+		return 0;
+	}
+
+	while (!do_exit && !s->exit_flag) {
+		len = swradio_read_sync(s->dev, buf, read_size);
+		if (len < 0) {
+			fprintf(stderr, "Error reading swradio samples: \"%s\"\n", strerror(errno));
+			break;
+		}
+		if (len == 0) {
+			continue;
+		}
+		rtlsdr_callback(buf, (uint32_t)len, s);
+	}
+
+	free(buf);
 	return 0;
 }
 
@@ -1213,7 +1247,7 @@ controller_thread_fn(void *arg)
 		/* hacky hopping */
 		s->freq_now = (s->freq_now + 1) % s->freq_len;
 		optimal_settings(s->freqs[s->freq_now], demod.rate_in);
-		rtlsdr_set_center_freq(dongle.dev, dongle.freq);
+		verbose_set_frequency(dongle.dev, dongle.freq);
 		dongle.mute = BUFFER_DUMP;
 	}
 	return 0;
@@ -1247,6 +1281,8 @@ void dongle_init(struct dongle_state *s)
 	s->gain = AUTO_GAIN; // tenths of a dB
 	s->mute = 0;
 	s->direct_sampling = 0;
+	strncpy(s->device_path, "/dev/swradio0", sizeof(s->device_path) - 1);
+	s->device_path[sizeof(s->device_path) - 1] = '\0';
 	s->demod_target = &demod;
 }
 
@@ -1442,7 +1478,7 @@ connection_thread_fn(void *arg)
 		/* close old dongle thread */
 		if (isReading)
 		{
-			rtlsdr_cancel_async(dongle.dev);
+			dongle.exit_flag = 1;
 			pthread_join(dongle.thread, NULL);
 			isReading = false;
 		}
@@ -1458,6 +1494,7 @@ connection_thread_fn(void *arg)
 			ConnectionDesc = ConnectionDescNew;
 
 			// Start reading samples from dongle
+			dongle.exit_flag = 0;
 			pthread_create(&dongle.thread, NULL, dongle_thread_fn, (void *) (&dongle));
 			isReading = true;
 		}
@@ -1622,7 +1659,6 @@ int main(int argc, char **argv)
 	struct sigaction sigact;
 #endif
 	int r, opt;
-	int dev_given = 0;
 	int custom_ppm = 0;
 
 	fprintf(stderr, "RTL SDR FM Streamer Version %s\n", VERSION);
@@ -1642,8 +1678,8 @@ int main(int argc, char **argv)
 		switch (opt)
 		{
 		case 'd':
-			dongle.dev_index = verbose_device_search(optarg);
-			dev_given = 1;
+			strncpy(dongle.device_path, optarg, sizeof(dongle.device_path) - 1);
+			dongle.device_path[sizeof(dongle.device_path) - 1] = '\0';
 			break;
 		case 'f':
 			if (controller.freq_len >= FREQUENCIES_LIMIT)
@@ -1796,20 +1832,10 @@ int main(int argc, char **argv)
 
 	ACTUAL_BUF_LENGTH = lcm_post[demod.post_downsample] * DEFAULT_BUF_LENGTH;
 
-	if (!dev_given)
-	{
-		dongle.dev_index = verbose_device_search("0");
-	}
-
-	if (dongle.dev_index < 0)
-	{
-		exit(1);
-	}
-
-	r = rtlsdr_open(&dongle.dev, (uint32_t) dongle.dev_index);
+	r = verbose_device_open(&dongle.dev, dongle.device_path);
 	if (r < 0)
 	{
-		fprintf(stderr, "Failed to open rtlsdr device #%d.\n", dongle.dev_index);
+		fprintf(stderr, "Failed to open swradio device %s: %s\n", dongle.device_path, strerror(errno));
 		exit(1);
 	}
 #ifndef _WIN32
@@ -1890,8 +1916,11 @@ int main(int argc, char **argv)
 		fprintf(stderr, "\nLibrary error %d, exiting...\n", r);
 	}
 
-	rtlsdr_cancel_async(dongle.dev);
-	pthread_join(dongle.thread, NULL);
+	if (isReading) {
+		dongle.exit_flag = 1;
+		pthread_join(dongle.thread, NULL);
+		isReading = false;
+	}
 	safe_cond_signal(&demod.ready, &demod.ready_m);
 	pthread_join(demod.thread, NULL);
 	safe_cond_signal(&output.ready, &output.ready_m);
@@ -1914,7 +1943,7 @@ int main(int argc, char **argv)
 		fclose(output.file);
 	}
 
-	rtlsdr_close(dongle.dev);
+	swradio_close(dongle.dev);
 	return r >= 0 ? r : -r;
 }
 

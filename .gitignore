@@ -41,4 +41,5 @@ CMakeFiles
 *.cmake
 
 build/
+build-swradio-check/
 *~
