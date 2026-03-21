@@ -78,15 +78,17 @@ Known Problems
 
 Building
 -------
-To compile rtl_fm_streamer just do the following steps (install git, cmake and libev first).
+To compile rtl_fm_streamer install the system RTL-SDR development package together with the build tools.
 
-    $ sudo apt-get install build-essential libusb-1.0-0-dev libev-dev
+  $ sudo apt-get install build-essential cmake pkg-config librtlsdr-dev libusb-1.0-0-dev libev-dev
     $ git clone https://github.com/AlbrechtL/rtl_fm_streamer.git
     $ cd rtl_fm_streamer/
     rtl_fm_streamer$ mkdir build
     rtl_fm_streamer$ cd build
     rtl_fm_streamer/build$ cmake ../
-    rtl_fm_streamer/build$ make
+  rtl_fm_streamer/build$ cmake --build .
+
+The project now links against the shared system librtlsdr provided by your distribution instead of building a bundled copy from this repository.
 
 Similar Projects
 ----------------

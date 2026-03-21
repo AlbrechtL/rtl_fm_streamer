@@ -65,6 +65,12 @@ find_package(LibUSB)
 set(THREADS_USE_PTHREADS_WIN32 true)
 find_package(Threads)
 
+if(NOT PKG_CONFIG_FOUND)
+    message(FATAL_ERROR "pkg-config is required to find librtlsdr")
+endif()
+
+pkg_check_modules(RTLSDR REQUIRED librtlsdr)
+
 if(NOT LIBUSB_FOUND)
     message(FATAL_ERROR "LibUSB 1.0 required to compile rtl-sdr")
 endif()
@@ -75,9 +81,13 @@ endif()
 # Setup the include and linker paths
 ########################################################################
 include_directories(
-    ${CMAKE_SOURCE_DIR}/include
+    ${RTLSDR_INCLUDE_DIRS}
     ${LIBUSB_INCLUDE_DIR}
     ${THREADS_PTHREADS_INCLUDE_DIR}
+)
+
+link_directories(
+    ${RTLSDR_LIBRARY_DIRS}
 )
 
 #link_directories(
@@ -124,47 +134,11 @@ endif (DETACH_KERNEL_DRIVER)
 ########################################################################
 # Add subdirectories
 ########################################################################
-add_subdirectory(include)
 add_subdirectory(src)
-
-########################################################################
-# Create Pkg Config File
-########################################################################
-FOREACH(inc ${LIBUSB_INCLUDE_DIR})
-    LIST(APPEND RTLSDR_PC_CFLAGS "-I${inc}")
-ENDFOREACH(inc)
-
-FOREACH(lib ${LIBUSB_LIBRARY_DIRS})
-    LIST(APPEND RTLSDR_PC_LIBS "-L${lib}")
-ENDFOREACH(lib)
-
-# use space-separation format for the pc file
-STRING(REPLACE ";" " " RTLSDR_PC_CFLAGS "${RTLSDR_PC_CFLAGS}")
-STRING(REPLACE ";" " " RTLSDR_PC_LIBS "${RTLSDR_PC_LIBS}")
-
-# unset these vars to avoid hard-coded paths to cross environment
-IF(CMAKE_CROSSCOMPILING)
-    UNSET(RTLSDR_PC_CFLAGS)
-    UNSET(RTLSDR_PC_LIBS)
-ENDIF(CMAKE_CROSSCOMPILING)
-
-set(prefix ${CMAKE_INSTALL_PREFIX})
-set(exec_prefix \${prefix})
-set(libdir \${exec_prefix}/${LIB_INSTALL_DIR})
-set(includedir \${prefix}/include)
-
-CONFIGURE_FILE(
-    ${CMAKE_CURRENT_SOURCE_DIR}/librtlsdr.pc.in
-    ${CMAKE_CURRENT_BINARY_DIR}/librtlsdr.pc
-@ONLY)
-
-INSTALL(
-    FILES ${CMAKE_CURRENT_BINARY_DIR}/librtlsdr.pc
-    DESTINATION ${LIB_INSTALL_DIR}/pkgconfig
-)
 
 ########################################################################
 # Print Summary
 ########################################################################
 MESSAGE(STATUS "Building for version: ${VERSION} / ${LIBVER}")
 MESSAGE(STATUS "Using install prefix: ${CMAKE_INSTALL_PREFIX}")
+MESSAGE(STATUS "Using system librtlsdr: ${RTLSDR_VERSION}")
