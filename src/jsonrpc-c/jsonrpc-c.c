@@ -33,10 +33,13 @@ static void *get_in_addr(struct sockaddr *sa) {
 
 static int send_response(struct jrpc_connection * conn, char *response) {
 	int fd = conn->fd;
+	ssize_t written;
 	if (conn->debug_level > 1)
 		printf("JSON Response:\n%s\n", response);
-	write(fd, response, strlen(response));
-	write(fd, "\n", 1);
+	written = write(fd, response, strlen(response));
+	(void)written;
+	written = write(fd, "\n", 1);
+	(void)written;
 	return 0;
 }
 
@@ -45,11 +48,12 @@ static int send_error(struct jrpc_connection * conn, int code, char* message,
 	int return_value = 0;
 	cJSON *result_root = cJSON_CreateObject();
 	cJSON *error_root = cJSON_CreateObject();
+	char *str_result;
 	cJSON_AddNumberToObject(error_root, "code", code);
 	cJSON_AddStringToObject(error_root, "message", message);
 	cJSON_AddItemToObject(result_root, "error", error_root);
 	cJSON_AddItemToObject(result_root, "id", id);
-	char * str_result = cJSON_Print(result_root);
+	str_result = cJSON_Print(result_root);
 	return_value = send_response(conn, str_result);
 	free(str_result);
 	cJSON_Delete(result_root);
@@ -61,11 +65,12 @@ static int send_result(struct jrpc_connection * conn, cJSON * result,
 		cJSON * id) {
 	int return_value = 0;
 	cJSON *result_root = cJSON_CreateObject();
+	char *str_result;
 	if (result)
 		cJSON_AddItemToObject(result_root, "result", result);
 	cJSON_AddItemToObject(result_root, "id", id);
 
-	char * str_result = cJSON_Print(result_root);
+	str_result = cJSON_Print(result_root);
 	return_value = send_response(conn, str_result);
 	free(str_result);
 	cJSON_Delete(result_root);
@@ -77,9 +82,10 @@ static int invoke_procedure(struct jrpc_server *server,
 	cJSON *returned = NULL;
 	int procedure_found = 0;
 	jrpc_context ctx;
+	int i;
 	ctx.error_code = 0;
 	ctx.error_message = NULL;
-	int i = server->procedure_count;
+	i = server->procedure_count;
 	while (i--) {
 		if (!strcmp(server->procedures[i].name, name)) {
 			procedure_found = 1;
@@ -139,12 +145,15 @@ static void close_connection(struct ev_loop *loop, ev_io *w) {
 static void connection_cb(struct ev_loop *loop, ev_io *w, int revents) {
 	struct jrpc_connection *conn;
 	struct jrpc_server *server = (struct jrpc_server *) w->data;
-	size_t bytes_read = 0;
+	ssize_t bytes_read = 0;
+	int fd;
+	char *new_buffer;
+	ssize_t max_read_size;
 	//get our 'subclassed' event watcher
 	conn = (struct jrpc_connection *) w;
-	int fd = conn->fd;
-	if (conn->pos == (conn->buffer_size - 1)) {
-		char * new_buffer = realloc(conn->buffer, conn->buffer_size *= 2);
+	fd = conn->fd;
+	if ((unsigned int)conn->pos == (conn->buffer_size - 1U)) {
+		new_buffer = realloc(conn->buffer, conn->buffer_size *= 2);
 		if (new_buffer == NULL) {
 			perror("Memory error");
 			return close_connection(loop, w);
@@ -153,7 +162,7 @@ static void connection_cb(struct ev_loop *loop, ev_io *w, int revents) {
 		memset(conn->buffer + conn->pos, 0, conn->buffer_size - conn->pos);
 	}
 	// can not fill the entire buffer, string must be NULL terminated
-	int max_read_size = conn->buffer_size - conn->pos - 1;
+	max_read_size = (ssize_t)(conn->buffer_size - (unsigned int)conn->pos - 1U);
 	if ((bytes_read = read(fd, conn->buffer + conn->pos, max_read_size))
 			== -1) {
 		perror("read");
@@ -167,11 +176,12 @@ static void connection_cb(struct ev_loop *loop, ev_io *w, int revents) {
 	} else {
 		cJSON *root;
 		char *end_ptr = NULL;
+		char *str_result;
 		conn->pos += bytes_read;
 
 		if ((root = cJSON_Parse_Stream(conn->buffer, &end_ptr)) != NULL) {
 			if (server->debug_level > 1) {
-				char * str_result = cJSON_Print(root);
+				str_result = cJSON_Print(root);
 				printf("Valid JSON Received:\n%s\n", str_result);
 				free(str_result);
 			}
@@ -209,9 +219,10 @@ static void connection_cb(struct ev_loop *loop, ev_io *w, int revents) {
 static void accept_cb(struct ev_loop *loop, ev_io *w, int revents) {
 	char s[INET6_ADDRSTRLEN];
 	struct jrpc_connection *connection_watcher;
-	connection_watcher = malloc(sizeof(struct jrpc_connection));
-	struct sockaddr_storage their_addr; // connector's address information
+	struct sockaddr_storage their_addr;
 	socklen_t sin_size;
+	connection_watcher = malloc(sizeof(struct jrpc_connection));
+	/* connector's address information */
 	sin_size = sizeof their_addr;
 	connection_watcher->fd = accept(w->fd, (struct sockaddr *) &their_addr,
 			&sin_size);
@@ -246,10 +257,11 @@ int jrpc_server_init(struct jrpc_server *server, int port_number) {
 
 int jrpc_server_init_with_ev_loop(struct jrpc_server *server, 
         int port_number, struct ev_loop *loop) {
+	char *debug_level_env;
 	memset(server, 0, sizeof(struct jrpc_server));
 	server->loop = loop;
 	server->port_number = port_number;
-	char * debug_level_env = getenv("JRPC_DEBUG");
+	debug_level_env = getenv("JRPC_DEBUG");
 	if (debug_level_env == NULL)
 		server->debug_level = 0;
 	else {

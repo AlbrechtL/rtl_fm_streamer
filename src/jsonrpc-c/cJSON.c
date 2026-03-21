@@ -34,8 +34,13 @@
 
 static int cJSON_strcasecmp(const char *s1,const char *s2)
 {
-	if (!s1) return (s1==s2)?0:1;if (!s2) return 1;
-	for(; tolower(*s1) == tolower(*s2); ++s1, ++s2)	if(*s1 == 0)	return 0;
+	if (!s1)
+		return (s1==s2)?0:1;
+	if (!s2)
+		return 1;
+	for(; tolower(*s1) == tolower(*s2); ++s1, ++s2)
+		if(*s1 == 0)
+			return 0;
 	return tolower(*(const unsigned char *)s1) - tolower(*(const unsigned char *)s2);
 }
 
@@ -199,9 +204,9 @@ static char **parse_string(cJSON *item, char **str)
 					len=4;if (uc<0x80) len=1;else if (uc<0x800) len=2;else if (uc<0x10000) len=3; ptr2+=len;
 
 					switch (len) {
-						case 4: *--ptr2 =((uc | 0x80) & 0xBF); uc >>= 6;
-						case 3: *--ptr2 =((uc | 0x80) & 0xBF); uc >>= 6;
-						case 2: *--ptr2 =((uc | 0x80) & 0xBF); uc >>= 6;
+						case 4: *--ptr2 =((uc | 0x80) & 0xBF); uc >>= 6; /* fall through */
+						case 3: *--ptr2 =((uc | 0x80) & 0xBF); uc >>= 6; /* fall through */
+						case 2: *--ptr2 =((uc | 0x80) & 0xBF); uc >>= 6; /* fall through */
 						case 1: *--ptr2 =(uc | firstByteMark[len]);
 					}
 					ptr2+=len;
@@ -278,9 +283,8 @@ static inline char **skip(char **in)
 cJSON *cJSON_Parse(const char *value)
 {
 	cJSON *c=cJSON_New_Item();
-	if (!c) return 0;       /* memory fail */
-
 	char **end_ptr = (char **)&value;
+	if (!c) return 0;       /* memory fail */
 
 	if (!parse_value(c,skip(end_ptr))) {cJSON_Delete(c);return 0;}
 	return c;
@@ -290,9 +294,10 @@ cJSON *cJSON_Parse(const char *value)
  *  Also indicates where in the stream the Object ends. */
 cJSON *cJSON_Parse_Stream(const char *value, char **end_ptr)
 {
+	cJSON *c;
 	if(!end_ptr)
 		return NULL;
-	cJSON *c=cJSON_New_Item();
+	c = cJSON_New_Item();
 	if (!c) return 0;       /* memory fail */
 
 	*end_ptr = (char *)value;
@@ -364,6 +369,7 @@ static char *print_value(cJSON *item,int depth,int fmt)
 static char **parse_array(cJSON *item, char **value)
 {
 	cJSON *child;
+	cJSON *new_item;
 	if (**value!='[')	/* not an array! */
 		return NULL;
 
@@ -389,7 +395,6 @@ static char **parse_array(cJSON *item, char **value)
 			break;
 		}
 
-		cJSON *new_item;
 		if (!(new_item=cJSON_New_Item())) return 0; 	/* memory fail */
 		child->next=new_item;new_item->prev=child;child=new_item;
 		if(!skip(parse_value(child,value)))
@@ -458,6 +463,7 @@ static char *print_array(cJSON *item,int depth,int fmt)
 static char **parse_object(cJSON *item, char **value)
 {
 	cJSON *child;
+	cJSON *new_item;
 	if (**value!='{')	return NULL;	/* not an object! */
 
 	item->type=cJSON_Object;
@@ -488,7 +494,6 @@ static char **parse_object(cJSON *item, char **value)
 			break;
 		}
 
-		cJSON *new_item;
 		if (!(new_item=cJSON_New_Item()))	return 0; /* memory fail */
 		child->next=new_item;new_item->prev=child;child=new_item;
 		if (!skip(parse_string(child,value)))
@@ -555,7 +560,8 @@ static char *print_object(cJSON *item,int depth,int fmt)
 		*ptr++=':';if (fmt) *ptr++='\t';
 		strcpy(ptr,entries[i]);ptr+=strlen(entries[i]);
 		if (i!=numentries-1) *ptr++=',';
-		if (fmt) *ptr++='\n';*ptr=0;
+		if (fmt) *ptr++='\n';
+		*ptr=0;
 		cJSON_free(names[i]);cJSON_free(entries[i]);
 	}
 
@@ -581,8 +587,17 @@ void   cJSON_AddItemToObject(cJSON *object,const char *string,cJSON *item)	{if (
 void	cJSON_AddItemReferenceToArray(cJSON *array, cJSON *item)						{cJSON_AddItemToArray(array,create_reference(item));}
 void	cJSON_AddItemReferenceToObject(cJSON *object,const char *string,cJSON *item)	{cJSON_AddItemToObject(object,string,create_reference(item));}
 
-cJSON *cJSON_DetachItemFromArray(cJSON *array,int which)			{cJSON *c=array->child;while (c && which>0) c=c->next,which--;if (!c) return 0;
-	if (c->prev) c->prev->next=c->next;if (c->next) c->next->prev=c->prev;if (c==array->child) array->child=c->next;c->prev=c->next=0;return c;}
+cJSON *cJSON_DetachItemFromArray(cJSON *array,int which)
+{
+	cJSON *c=array->child;
+	while (c && which>0) c=c->next,which--;
+	if (!c) return 0;
+	if (c->prev) c->prev->next=c->next;
+	if (c->next) c->next->prev=c->prev;
+	if (c==array->child) array->child=c->next;
+	c->prev=c->next=0;
+	return c;
+}
 void   cJSON_DeleteItemFromArray(cJSON *array,int which)			{cJSON_Delete(cJSON_DetachItemFromArray(array,which));}
 cJSON *cJSON_DetachItemFromObject(cJSON *object,const char *string) {int i=0;cJSON *c=object->child;while (c && cJSON_strcasecmp(c->string,string)) i++,c=c->next;if (c) return cJSON_DetachItemFromArray(object,i);return 0;}
 void   cJSON_DeleteItemFromObject(cJSON *object,const char *string) {cJSON_Delete(cJSON_DetachItemFromObject(object,string));}
