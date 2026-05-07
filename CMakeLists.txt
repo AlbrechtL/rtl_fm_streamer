@@ -21,7 +21,7 @@
 ########################################################################
 # Project setup
 ########################################################################
-cmake_minimum_required(VERSION 2.6)
+cmake_minimum_required(VERSION 3.10)
 project(rtlsdr C)
 
 #select the release build type by default to get optimization flags
