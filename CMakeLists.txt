@@ -33,10 +33,6 @@ set(CMAKE_BUILD_TYPE ${CMAKE_BUILD_TYPE} CACHE STRING "")
 
 list(APPEND CMAKE_MODULE_PATH ${CMAKE_SOURCE_DIR}/cmake/Modules)
 
-if(NOT LIB_INSTALL_DIR)
-   set(LIB_INSTALL_DIR lib)
-endif()
-
 # Set the version information here
 set(VERSION_INFO_MAJOR_VERSION 0) # increment major on api compatibility changes
 set(VERSION_INFO_MINOR_VERSION 5) # increment minor on feature-level changes
