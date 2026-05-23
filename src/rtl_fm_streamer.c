@@ -52,6 +52,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 
 #ifndef _WIN32
 #include <unistd.h>
@@ -99,12 +100,6 @@
 #define DEEMPHASIS_FM_EU        0.000050
 #define DEEMPHASIS_FM_USA       0.000075
 #define PCM                     1           // audio format
-
-typedef enum
-{
-    false = 0,
-    true
-}bool;
 
 static volatile int do_exit = 0;
 static int lcm_post[17] =
