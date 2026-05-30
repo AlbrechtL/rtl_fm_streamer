@@ -97,8 +97,8 @@
 #define PI_4_F          0.78539816f
 
 #define DEEMPHASIS_NONE         0
-#define DEEMPHASIS_FM_EU        0.000050
-#define DEEMPHASIS_FM_USA       0.000075
+#define DEEMPHASIS_FM_50u       0.000050    // EU
+#define DEEMPHASIS_FM_75u       0.000075    // NA (North America)
 #define PCM                     1           // audio format
 
 static volatile int do_exit = 0;
@@ -299,8 +299,8 @@ void usage(void)
 			"\t[-E enable_option (default: none)]\n"
 			"\t    use multiple -E to enable multiple options\n"
 			"\t    edge:   enable lower edge tuning\n"
-			"\t    dc:     enable dc blocking filter\n"
-			"\t    deemp:  enable de-emphasis filter\n"
+            "\t    deemp50: enable 50us EU de-emphasis filter\n"
+            "\t    deemp75: enable 75us NA de-emphasis filter\n"
 			"\t    direct: enable direct sampling\n"
 			"\t    offset: enable offset tuning\n"
 			"\t[-P Listen IP port]\n"
@@ -1258,13 +1258,12 @@ void demod_init(struct demod_state *s)
 	s->prev_index = 0;
 	s->post_downsample = 1;  // once this works, default = 4
 	s->custom_atan = 1;
-	s->deemph = DEEMPHASIS_FM_EU;
 	s->offset_tuning = 0;
 	s->rate_out2 = 48000;
 	s->pre_j = s->pre_r = s->now_r = s->now_j = 0;
 	s->pre_j_f32 = s->pre_r_f32 = 0;
 	s->prev_lpr_index = 0;
-	s->deemph = DEEMPHASIS_FM_EU;
+    s->deemph = DEEMPHASIS_FM_50u;
 	s->deemph_a = 0;
 	s->deemph_l = 0;
 	s->deemph_r = 0;
@@ -1490,14 +1489,12 @@ connection_thread_fn(void *arg)
 			{
 				fprintf(stderr, "Stereo demodulation\n");
 
-				demod.deemph = DEEMPHASIS_FM_EU;
 				demod.lpr.mode = 2;
 			}
 			else // Mono
 			{
 				fprintf(stderr, "Mono demodulation\n");
 
-				demod.deemph = DEEMPHASIS_FM_EU;
 				demod.lpr.mode = 1;
 			}
 			// Send updated RIFF/WAVfmt header
@@ -1695,9 +1692,13 @@ int main(int argc, char **argv)
 			{
 				controller.edge = 1;
 			}
-			if (strcmp("deemp", optarg) == 0)
+			if (strcmp("deemp50", optarg) == 0)
 			{
-				demod.deemph = DEEMPHASIS_FM_EU;
+				demod.deemph = DEEMPHASIS_FM_50u;
+			}
+			if (strcmp("deemp75", optarg) == 0)
+			{
+				demod.deemph = DEEMPHASIS_FM_75u;
 			}
 			if (strcmp("direct", optarg) == 0)
 			{
@@ -1720,7 +1721,7 @@ int main(int argc, char **argv)
 			demod.rate_out = 192000;
 			output.rate = 48000;
 			demod.rate_out2 = 48000;
-			demod.deemph = DEEMPHASIS_FM_EU;
+			demod.deemph = DEEMPHASIS_FM_50u;
 			demod.squelch_level = 0;
 			demod.lpr.mode = 2;
 			/* RPI can do only 90, 128 is optimal */
@@ -1733,7 +1734,7 @@ int main(int argc, char **argv)
 			demod.rate_out = 192000;
 			output.rate = 48000;
 			demod.rate_out2 = 48000;
-			demod.deemph = DEEMPHASIS_FM_EU;
+			demod.deemph = DEEMPHASIS_FM_50u;
 			demod.squelch_level = 0;
 			demod.lpr.mode = 1;
 			demod.lpr.size = 128;
@@ -1821,7 +1822,7 @@ int main(int argc, char **argv)
 
 	if (demod.deemph)
 	{
-		//fprintf(stderr, "De-epmhasis IIR: %.1f us\n", demod.deemph * 1e6);
+		fprintf(stderr, "Init de-epmhasis IIR to: %.1f us\n", demod.deemph * 1e6);
 		demod.deemph_a = (int) lrint(1.0 / ((1.0 - exp(-1.0 / ((double) demod.rate_out * demod.deemph)))));
 		demod.deemph_lambda = (float) exp(-1.0 / ((double) output.rate * demod.deemph));
 	}
@@ -1912,4 +1913,3 @@ int main(int argc, char **argv)
 	rtlsdr_close(dongle.dev);
 	return r >= 0 ? r : -r;
 }
-
