@@ -296,6 +296,7 @@ void usage(void)
 			"\t[-g tuner_gain (default: automatic)]\n"
 			"\t[-l squelch_level (default: 0/off)]\n"
 			"\t[-p ppm_error (default: 0)]\n"
+			"\t[-u volume (1 to 50, default: 40)]\n"
 			"\t[-E enable_option (default: none)]\n"
 			"\t    use multiple -E to enable multiple options\n"
 			"\t    edge:   enable lower edge tuning\n"
@@ -1629,7 +1630,7 @@ int main(int argc, char **argv)
 	isStartStream = false;
 	isReading = false;
 
-	while((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:h:P:j:v:XY")) != -1)
+	while((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:u:E:F:h:P:j:v:XY")) != -1)
 	{
 		switch (opt)
 		{
@@ -1686,6 +1687,14 @@ int main(int argc, char **argv)
 		case 'p':
 			dongle.ppm_error = atoi(optarg);
 			custom_ppm = 1;
+			break;
+		case 'u':
+			demod.volume = atof(optarg) / 100.0f;
+			if (demod.volume < 0.01f || demod.volume > 0.5f)
+			{
+				demod.volume = 0.4f;
+				fprintf(stderr, "Set volume to: 40, (range: 1 - 50)\n");
+			}
 			break;
 		case 'E':
 			if (strcmp("edge", optarg) == 0)
