@@ -97,8 +97,8 @@
 #define PI_4_F          0.78539816f
 
 #define DEEMPHASIS_NONE         0
-#define DEEMPHASIS_FM_EU        0.000050
-#define DEEMPHASIS_FM_USA       0.000075
+#define DEEMPHASIS_FM_50u       0.000050    // EU
+#define DEEMPHASIS_FM_75u       0.000075    // NA (North America)
 #define PCM                     1           // audio format
 
 static volatile int do_exit = 0;
@@ -166,7 +166,7 @@ struct demod_state
 	float lowpass_tb[48];
 	int16_t lp_i_hist[10][6];
 	int16_t lp_q_hist[10][6];
-	/* result buffer fo FM will be always 1/2 of lowpassed or less, so no need to shift */
+	/* result buffer for FM will be always 1/2 of lowpassed or less, so no need to shift */
 	int16_t result[MAXIMUM_BUF_LENGTH];
 	int result_len;
 	int16_t droop_i_hist[9];
@@ -207,8 +207,6 @@ struct output_state
 {
 	int exit_flag;
 	pthread_t thread;
-	FILE *file;
-	char *filename;
 	int rate;
 	int16_t *result;
 	int result_len;
@@ -285,27 +283,29 @@ json_rpc_state json_rpc;
 void usage(void)
 {
 	fprintf(
-	stderr, "rtl_fm_streamer, a simple narrow band FM demodulator for RTL2832 based DVB-T receivers\n\n"
-			"Use:\trtl_fm_streamer -f freq [-options] [filename]\n"
-			"\t[-M modulation (default: wbfm)]\n"
-			"\t    fm, wbfm, raw, am, usb, lsb\n"
-			"\t    wbfm == -M fm -s 170k -o 4 -A fast -r 32k -l 0 -E deemp\n"
-			"\t    raw mode outputs 2x16 bit IQ pairs\n"
-			"\t[-s sample_rate (default: 24k)]\n"
+    stderr, "rtl_fm_streamer, a streaming FM demodulator for RTL2832 based DVB-T receivers\n\n"
+            "Use:\trtl_fm_streamer [-options]\n"
 			"\t[-d device_index (default: 0)]\n"
+			"\t[-f frequency_to_tune_to (Hz)]\n"
 			"\t[-g tuner_gain (default: automatic)]\n"
+			"\t[-h print this help]\n"
+			"\t[-j JSON-RPC server listen port (default: 2345)]\n"
 			"\t[-l squelch_level (default: 0/off)]\n"
+			"\t[-o oversample (is very buggy, default: 1)]\n"
 			"\t[-p ppm_error (default: 0)]\n"
+			"\t[-s sample_rate (default: 240k)]\n"
+			"\t[-u volume (1 to 50, default: 40)]\n"
+			"\t[-v print version]\n"
 			"\t[-E enable_option (default: none)]\n"
 			"\t    use multiple -E to enable multiple options\n"
-			"\t    edge:   enable lower edge tuning\n"
-			"\t    dc:     enable dc blocking filter\n"
-			"\t    deemp:  enable de-emphasis filter\n"
-			"\t    direct: enable direct sampling\n"
-			"\t    offset: enable offset tuning\n"
-			"\t[-P Listen IP port]\n"
-			"\tfilename ('-' means stdout)\n"
-			"\t    omitting the filename also uses stdout\n\n"
+			"\t    edge:    enable lower edge tuning\n"
+			"\t    deemp50: enable 50us EU de-emphasis filter\n"
+			"\t    deemp75: enable 75us NA de-emphasis filter\n"
+			"\t    direct:  enable direct sampling\n"
+			"\t    offset:  enable offset tuning\n"
+			"\t[-P HTTP server listen port (default: 2346)]\n"
+			"\t[-X Start with FM stereo 50us EU de-emphasis support]\n"
+			"\t[-Y Start with FM mono 50us EU de-emphasis support]\n"
 			"Experimental options:\n"
 			"\t[-r resample_rate (default: 48000)]\n"
 			"\t[-t squelch_delay (default: 10)]\n"
@@ -313,7 +313,6 @@ void usage(void)
 			"\t[-F fir_size (default: off)]\n"
 			"\t    enables low-leakage downsample filter\n"
 			"\t    size can be 0 or 9.  0 has bad roll off\n"
-			"\t[-A std/fast/lut choose atan math (default: std)]\n"
 			"\n");
 	exit(1);
 }
@@ -1258,13 +1257,12 @@ void demod_init(struct demod_state *s)
 	s->prev_index = 0;
 	s->post_downsample = 1;  // once this works, default = 4
 	s->custom_atan = 1;
-	s->deemph = DEEMPHASIS_FM_EU;
 	s->offset_tuning = 0;
 	s->rate_out2 = 48000;
 	s->pre_j = s->pre_r = s->now_r = s->now_j = 0;
 	s->pre_j_f32 = s->pre_r_f32 = 0;
 	s->prev_lpr_index = 0;
-	s->deemph = DEEMPHASIS_FM_EU;
+    s->deemph = DEEMPHASIS_FM_50u;
 	s->deemph_a = 0;
 	s->deemph_l = 0;
 	s->deemph_r = 0;
@@ -1483,21 +1481,18 @@ connection_thread_fn(void *arg)
 			verbose_set_frequency(dongle.dev, dongle.freq);
 
 			// Start streaming
-			send(ConnectionDesc, StreamStart, sizeof(StreamStart),
-			MSG_NOSIGNAL);
+			send(ConnectionDesc, StreamStart, sizeof(StreamStart), MSG_NOSIGNAL);
 
 			if (isStereo)
 			{
 				fprintf(stderr, "Stereo demodulation\n");
 
-				demod.deemph = DEEMPHASIS_FM_EU;
 				demod.lpr.mode = 2;
 			}
 			else // Mono
 			{
 				fprintf(stderr, "Mono demodulation\n");
 
-				demod.deemph = DEEMPHASIS_FM_EU;
 				demod.lpr.mode = 1;
 			}
 			// Send updated RIFF/WAVfmt header
@@ -1632,7 +1627,7 @@ int main(int argc, char **argv)
 	isStartStream = false;
 	isReading = false;
 
-	while((opt = getopt(argc, argv, "d:f:g:s:b:l:o:t:r:p:E:F:h:P:j:v:XY")) != -1)
+	while((opt = getopt(argc, argv, "d:f:g:l:s:r:o:t:p:u:E:F:P:j:hvXY")) != -1)
 	{
 		switch (opt)
 		{
@@ -1641,19 +1636,7 @@ int main(int argc, char **argv)
 			dev_given = 1;
 			break;
 		case 'f':
-			if (controller.freq_len >= FREQUENCIES_LIMIT)
-			{
-				break;
-			}
-			if (strchr(optarg, ':'))
-			{
-				frequency_range(&controller, optarg);
-			}
-			else
-			{
-				controller.freqs[controller.freq_len] = (uint32_t) atofs(optarg);
-				controller.freq_len++;
-			}
+				controller.freqs[0] = (uint32_t) atofs(optarg);
 			break;
 		case 'g':
 			dongle.gain = (int) (atof(optarg) * 10);
@@ -1690,14 +1673,26 @@ int main(int argc, char **argv)
 			dongle.ppm_error = atoi(optarg);
 			custom_ppm = 1;
 			break;
+		case 'u':
+			demod.volume = atof(optarg) / 100.0f;
+			if (demod.volume < 0.01f || demod.volume > 0.5f)
+			{
+				demod.volume = 0.4f;
+				fprintf(stderr, "Set volume to: 40, (range: 1 - 50)\n");
+			}
+			break;
 		case 'E':
 			if (strcmp("edge", optarg) == 0)
 			{
 				controller.edge = 1;
 			}
-			if (strcmp("deemp", optarg) == 0)
+			if (strcmp("deemp50", optarg) == 0)
 			{
-				demod.deemph = DEEMPHASIS_FM_EU;
+				demod.deemph = DEEMPHASIS_FM_50u;
+			}
+			if (strcmp("deemp75", optarg) == 0)
+			{
+				demod.deemph = DEEMPHASIS_FM_75u;
 			}
 			if (strcmp("direct", optarg) == 0)
 			{
@@ -1720,7 +1715,7 @@ int main(int argc, char **argv)
 			demod.rate_out = 192000;
 			output.rate = 48000;
 			demod.rate_out2 = 48000;
-			demod.deemph = DEEMPHASIS_FM_EU;
+			demod.deemph = DEEMPHASIS_FM_50u;
 			demod.squelch_level = 0;
 			demod.lpr.mode = 2;
 			/* RPI can do only 90, 128 is optimal */
@@ -1733,7 +1728,7 @@ int main(int argc, char **argv)
 			demod.rate_out = 192000;
 			output.rate = 48000;
 			demod.rate_out2 = 48000;
-			demod.deemph = DEEMPHASIS_FM_EU;
+			demod.deemph = DEEMPHASIS_FM_50u;
 			demod.squelch_level = 0;
 			demod.lpr.mode = 1;
 			demod.lpr.size = 128;
@@ -1752,8 +1747,7 @@ int main(int argc, char **argv)
 			break;
 
 		case 'v':
-			printf(VERSION);
-			break;
+			exit(0);
 
 		case 'h':
 		default:
@@ -1778,15 +1772,6 @@ int main(int argc, char **argv)
 	if (controller.freq_len > 1)
 	{
 		demod.terminate_on_squelch = 0;
-	}
-
-	if (argc <= optind)
-	{
-		output.filename = "-";
-	}
-	else
-	{
-		output.filename = argv[optind];
 	}
 
 	ACTUAL_BUF_LENGTH = lcm_post[demod.post_downsample] * DEFAULT_BUF_LENGTH;
@@ -1821,7 +1806,7 @@ int main(int argc, char **argv)
 
 	if (demod.deemph)
 	{
-		//fprintf(stderr, "De-epmhasis IIR: %.1f us\n", demod.deemph * 1e6);
+		fprintf(stderr, "Init de-epmhasis IIR to: %.1f us\n", demod.deemph * 1e6);
 		demod.deemph_a = (int) lrint(1.0 / ((1.0 - exp(-1.0 / ((double) demod.rate_out * demod.deemph)))));
 		demod.deemph_lambda = (float) exp(-1.0 / ((double) output.rate * demod.deemph));
 	}
@@ -1838,23 +1823,6 @@ int main(int argc, char **argv)
 	}
 
 	verbose_ppm_set(dongle.dev, dongle.ppm_error);
-
-	if (strcmp(output.filename, "-") == 0)
-	{ /* Write samples to stdout */
-		output.file = stdout;
-#ifdef _WIN32
-		_setmode(_fileno(output.file), _O_BINARY);
-#endif
-	}
-	else
-	{
-		output.file = fopen(output.filename, "wb");
-		if (!output.file)
-		{
-			fprintf(stderr, "Failed to open %s\n", output.filename);
-			exit(1);
-		}
-	}
 
 	// Init FM float demodulator
 	init_u8_f32_table();
@@ -1894,7 +1862,6 @@ int main(int argc, char **argv)
 	safe_cond_signal(&controller.hop, &controller.hop_m);
 	pthread_join(controller.thread, NULL);
 
-
 	// Close TCP connection
 	close(ConnectionDesc);
 	close(connection.SocketDesc);
@@ -1904,12 +1871,6 @@ int main(int argc, char **argv)
 	output_cleanup(&output);
 	controller_cleanup(&controller);
 
-	if (output.file != stdout)
-	{
-		fclose(output.file);
-	}
-
 	rtlsdr_close(dongle.dev);
 	return r >= 0 ? r : -r;
 }
-
